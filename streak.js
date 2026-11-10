@@ -114,7 +114,10 @@ function showWorkoutSummary(sess, streakBefore) {
       <button class="btn primary" id="sumDone">Fertig</button>
     </div>`;
   document.body.appendChild(ov);
+  lockScroll();
+  blockTouchScroll(ov);
   ov.querySelector('#sumDone').onclick = () => {
+    unlockScroll();
     ov.classList.add('closing');
     setTimeout(() => ov.remove(), 250);
     if (currentTab === 'train') renderTrain();

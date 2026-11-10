@@ -48,6 +48,33 @@ function toast(msg) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
 }
 
+/* ---------- Hintergrund sperren, solange ein Fenster offen ist ---------- */
+let lockCount = 0, lockY = 0;
+function lockScroll() {
+  if (lockCount++ > 0) return;
+  lockY = window.scrollY || 0;
+  const b = document.body.style;
+  b.position = 'fixed'; b.top = `-${lockY}px`; b.left = '0'; b.right = '0'; b.width = '100%'; b.overflow = 'hidden';
+}
+function unlockScroll() {
+  if (lockCount === 0 || --lockCount > 0) return;
+  const b = document.body.style;
+  b.position = ''; b.top = ''; b.left = ''; b.right = ''; b.width = ''; b.overflow = '';
+  window.scrollTo(0, lockY);
+}
+/* Wischen auf Flächen ohne eigenen Scrollbereich nie an die Seite durchreichen */
+function blockTouchScroll(el) {
+  el.addEventListener('touchmove', (e) => {
+    let n = e.target;
+    while (n && n !== el) {
+      const cs = getComputedStyle(n);
+      if (/(auto|scroll)/.test(cs.overflowY + cs.overflowX) && (n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1)) return;
+      n = n.parentElement;
+    }
+    e.preventDefault();
+  }, { passive: false });
+}
+
 /* ---------- Sheets (von unten) ---------- */
 const sheetStack = [];
 function openSheet({ title, body, onMount, onClose, headRight = '' }) {
@@ -61,6 +88,8 @@ function openSheet({ title, body, onMount, onClose, headRight = '' }) {
       <div class="pb">${body}</div>
     </div>`;
   document.getElementById('sheets').appendChild(el);
+  lockScroll();
+  blockTouchScroll(el);
   const entry = { el, onClose };
   sheetStack.push(entry);
   el.querySelector('.backdrop').addEventListener('click', () => closeSheet(el));
@@ -75,6 +104,7 @@ function closeSheet(el) {
   const [entry] = sheetStack.splice(idx, 1);
   if (entry.onClose) entry.onClose();
   entry.el.classList.add('closing');
+  unlockScroll();
   setTimeout(() => entry.el.remove(), 220);
 }
 function closeAllSheets() {

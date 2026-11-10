@@ -57,11 +57,19 @@ function recommendation() {
   const snoozed = st.dismissedRec && daysBetween(st.dismissedRec, today) < 3;
   const tol = Math.max(0.1, Math.abs(target) * 0.25);
   let delta = 0;
-  if (Math.abs(diff) > tol) {
+  let tdee = null;
+  if (bodyComplete()) {
+    // Gesamtumsatz aus Formel und echtem Verlauf (gegessen minus Gewichtsänderung) kombinieren
+    tdee = estimateTDEE(avg, rate);
+    const recKcal = Math.round((tdee.value + target * 7700 / 7) / 50) * 50;
+    const d = recKcal - st.goals.kcal;
+    if (Math.abs(diff) > tol || Math.abs(d) >= 150) delta = clamp(d, -400, 400);
+    if (Math.abs(delta) < 100) delta = 0;
+  } else if (Math.abs(diff) > tol) {
     delta = clamp(Math.round(diff * 7700 / 7 / 50) * 50, -300, 300);
     if (Math.abs(delta) < 100) delta = Math.sign(diff) * 100;
   }
-  return { state: 'ready', rate, target, avg, delta, due, snoozed, sinceAdjust };
+  return { state: 'ready', rate, target, avg, delta, due, snoozed, sinceAdjust, tdee };
 }
 function hasActiveRec() {
   const r = recommendation();
@@ -71,6 +79,15 @@ function hasActiveRec() {
 function recCardHTML(r) {
   const st = S.settings;
   if (r.state === 'collect') {
+    const sr = startRecommendation();
+    if (sr && Math.abs(sr.kcal - st.goals.kcal) >= 100) {
+      return `<section class="rec">
+        <div class="eyebrow">Startempfehlung aus deinen Körperdaten</div>
+        <div class="delta num">${fmt(sr.kcal)} kcal / Tag</div>
+        <p>Gesamtumsatz geschätzt <b class="num">${fmt(sr.tdee)} kcal</b>, für ${GOAL_LABEL[st.goal]} ${st.goal === 'maintain' ? 'ohne Anpassung' : `${sr.adj > 0 ? '+' : '–'}${fmt(Math.abs(sr.adj))} kcal`}. Dazu ${fmt(sr.protein)} g Protein, ${fmt(sr.fat)} g Fett und ${fmt(sr.carbs)} g Kohlenhydrate. Nach ${MIN_DAYS} Tagen Messungen passt die App das an deinen echten Verlauf an (${r.days}/${MIN_DAYS}).</p>
+        <div class="row"><button class="btn primary" id="startApply">Übernehmen</button></div>
+      </section>`;
+    }
     return `<section class="card">
       <div class="card-title"><h2>Progressionsempfehlung</h2><span class="sub">${r.days}/${MIN_DAYS} Tage</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:${r.days / MIN_DAYS * 100}%"></div></div>
@@ -83,6 +100,7 @@ function recCardHTML(r) {
     return `<section class="rec">
       <h2>Du liegst im Plan</h2>
       <p>Dein Trend: <b class="num">${rateTxt}</b>, Ziel (${GOAL_LABEL[st.goal]}): <b class="num">${tgtTxt}</b>. Behalte deine ${fmt(st.goals.kcal)} kcal bei.</p>
+      ${r.tdee ? `<p class="tgt-sub">Geschätzter Gesamtumsatz: <b class="num">${fmt(r.tdee.value)} kcal</b> (${r.tdee.source}).</p>` : ''}
     </section>`;
   }
   if (!r.due || r.snoozed) {
@@ -102,6 +120,7 @@ function recCardHTML(r) {
     <div class="eyebrow">Neue Empfehlung</div>
     <div class="delta ${more ? 'green' : 'red'}">${more ? '+' : '–'}${fmt(Math.abs(r.delta))} kcal / Tag</div>
     <p>${why} Trend: <b class="num">${rateTxt}</b>, Ziel: <b class="num">${tgtTxt}</b>. Neues Kalorienziel: <b class="num">${fmt(st.goals.kcal + r.delta)} kcal</b>. Protein bleibt, die Änderung geht auf Kohlenhydrate und Fett.</p>
+    ${r.tdee ? `<p class="tgt-sub">Dein Gesamtumsatz liegt geschätzt bei <b class="num">${fmt(r.tdee.value)} kcal</b> (${r.tdee.source}).</p>` : ''}
     <div class="row"><button class="btn primary" id="recApply">Übernehmen</button><button class="btn" id="recLater">Später</button></div>
   </section>`;
 }
@@ -183,6 +202,7 @@ function renderWeight() {
         <div class="stat"><b>${rate == null ? '–' : (rate > 0 ? '+' : '') + fmt(rate, 2)}</b><span>kg / Woche</span></div>
       </div>
     </section>
+    ${bodyCardHTML(latest)}
     <section class="card">
       <div class="card-title"><h2>Ziel</h2><button class="btn small" id="tgtBtn">${st.targetWeight ? `Zielgewicht ${fmt(st.targetWeight, 1)} kg` : 'Zielgewicht festlegen'}</button></div>
       <div class="seg" id="wGoal">${['cut', 'maintain', 'bulk'].map(g => `<button data-g="${g}" class="${st.goal === g ? 'on' : ''}">${GOAL_LABEL[g]}</button>`).join('')}</div>
@@ -223,6 +243,12 @@ function renderWeight() {
     }
   });
   if ($('#recApply')) $('#recApply').onclick = () => { applyRec(r.delta); renderWeight(); updateWeightDot(); toast(`Neues Ziel: ${fmt(st.goals.kcal)} kcal`); };
+  if ($('#bodyBtn')) $('#bodyBtn').onclick = openBodyEditor;
+  if ($('#startApply')) $('#startApply').onclick = () => {
+    const sr = startRecommendation();
+    Object.assign(st.goals, { kcal: sr.kcal, protein: sr.protein, fat: sr.fat, carbs: sr.carbs });
+    st.lastAdjust = dayKey(); save(); renderWeight(); toast(`Neues Ziel: ${fmt(sr.kcal)} kcal`);
+  };
   if ($('#recLater')) $('#recLater').onclick = () => { st.dismissedRec = dayKey(); save(); renderWeight(); updateWeightDot(); };
 }
 
@@ -346,4 +372,115 @@ function forecastCardHTML(latest, trend) {
     main = `<div class="delta red">Keine Prognose</div><p>${st.goal === 'maintain' ? `Dein Ziel steht auf „Halten“. Stell es auf ${dir < 0 ? '„Diät“' : '„Aufbau“'}, um ${fmt(Math.abs(remaining), 1)} kg ${dir < 0 ? 'abzunehmen' : 'zuzunehmen'}.` : `Dein Ziel und dein Zielgewicht passen nicht zusammen. Stell das Ziel auf ${dir < 0 ? '„Diät“' : '„Aufbau“'}.`}</p>`;
   }
   return `<section class="rec"><div class="eyebrow">Prognose · noch ${fmt(Math.abs(remaining), 1)} kg</div>${main}${sub}${bar}</section>`;
+}
+
+
+/* ---------- Körperdaten & Energiebedarf ---------- */
+const ACTIVITY = { low: ['Sitzend', 1.3, 'Bürojob, wenig Schritte'], normal: ['Normal', 1.4, 'etwas Bewegung im Alltag'], high: ['Aktiv', 1.55, 'Job auf den Beinen, viele Schritte'] };
+function bodyComplete() {
+  const b = S.settings.body || {};
+  return b.height > 120 && b.age > 12 && (b.sex === 'm' || b.sex === 'f');
+}
+function trainingDaysPerWeek() {
+  const n = Object.values(S.plan || {}).filter(id => S.workouts[id]).length;
+  return n || 3;
+}
+function bmr(kg) {
+  const b = S.settings.body;
+  return 10 * kg + 6.25 * b.height - 5 * b.age + (b.sex === 'm' ? 5 : -161);
+}
+function activityFactor() {
+  const b = S.settings.body;
+  return Math.min(1.9, (ACTIVITY[b.activity || 'normal'][1]) + 0.04 * trainingDaysPerWeek());
+}
+function formulaTDEE(kg) { return bmr(kg) * activityFactor(); }
+
+/* Durchschnittlich gegessene Kalorien der letzten 21 Tage (nur Tage mit Einträgen) */
+function loggedIntake() {
+  const days = [];
+  for (let i = 1; i <= 21; i++) {
+    const k = addDays(dayKey(), -i);
+    const t = dayTotals(k);
+    if (t.kcal > 800) days.push(t.kcal);
+  }
+  return days.length >= 10 ? { avg: days.reduce((a, b) => a + b, 0) / days.length, n: days.length } : null;
+}
+
+function estimateTDEE(kg, ratePerWeek) {
+  const f = formulaTDEE(kg);
+  const intake = loggedIntake();
+  const eaten = intake ? intake.avg : S.settings.goals.kcal;
+  const observed = eaten - ratePerWeek * 7700 / 7;
+  const w = intake ? 0.7 : 0.5;
+  const value = Math.round(clamp(w * observed + (1 - w) * f, f * 0.75, f * 1.3) / 10) * 10;
+  return { value, formula: Math.round(f), source: intake ? `Formel + ${intake.n} Tage Ernährungstagebuch + Gewichtsverlauf` : 'Formel + Gewichtsverlauf' };
+}
+
+function startRecommendation() {
+  if (!bodyComplete()) return null;
+  const series = smooth(weightSeries());
+  if (!series.length) return null;
+  const st = S.settings;
+  const kg = series[series.length - 1].avg;
+  const tdee = Math.round(formulaTDEE(kg) / 10) * 10;
+  const rateKg = st.goal === 'cut' ? -kg * st.rate.cut / 100 : st.goal === 'bulk' ? kg * st.rate.bulk / 100 : 0;
+  const adj = Math.round(rateKg * 7700 / 7 / 50) * 50;
+  const kcal = Math.max(1200, Math.round((tdee + adj) / 50) * 50);
+  const protein = Math.round(kg * (st.goal === 'cut' ? 2.0 : 1.8));
+  const fat = Math.round(kg * 0.8);
+  const carbs = Math.max(50, Math.round((kcal - protein * 4 - fat * 9) / 4));
+  return { kcal, tdee, adj, protein, fat, carbs };
+}
+
+function bodyCardHTML(latest) {
+  const b = S.settings.body || {};
+  if (!bodyComplete()) {
+    return `<button class="wcard" id="bodyBtn"><div class="t"><b>Körperdaten angeben</b><span>Größe, Alter und Geschlecht für genauere Kalorien</span></div><svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>`;
+  }
+  const kg = latest ? latest.avg : null;
+  const bmi = kg ? kg / ((b.height / 100) ** 2) : null;
+  return `<section class="card">
+    <div class="card-title"><h2>Körperdaten</h2><button class="btn small" id="bodyBtn">${I.edit}Bearbeiten</button></div>
+    <span class="muted" style="font-size:14px">${b.height} cm · ${b.age} Jahre · ${b.sex === 'm' ? 'männlich' : 'weiblich'} · Alltag ${ACTIVITY[b.activity || 'normal'][0].toLowerCase()} · ${trainingDaysPerWeek()} Trainings/Woche</span>
+    ${kg ? `<div class="stats">
+      <div class="stat"><b>${fmt(bmi, 1)}</b><span>BMI</span></div>
+      <div class="stat"><b>${fmt(Math.round(bmr(kg) / 10) * 10)}</b><span>Grundumsatz</span></div>
+      <div class="stat"><b>${fmt(Math.round(formulaTDEE(kg) / 10) * 10)}</b><span>Gesamtumsatz</span></div>
+    </div>
+    <span class="muted" style="font-size:12px">Schätzung nach Mifflin-St Jeor in kcal pro Tag. Der BMI unterschätzt Muskulatur, nimm ihn nur als grobe Orientierung.</span>` : '<span class="muted" style="font-size:14px">Trag dein Gewicht ein, dann siehst du hier deinen Energiebedarf.</span>'}
+  </section>`;
+}
+
+function openBodyEditor() {
+  const b = Object.assign({ activity: 'normal' }, S.settings.body || {});
+  const el = openSheet({
+    title: 'Körperdaten',
+    body: `
+      <div class="grid2">
+        <div class="field"><label for="bdH">Größe (cm)</label><input class="input" id="bdH" inputmode="numeric" value="${b.height || ''}" placeholder="z. B. 180"></div>
+        <div class="field"><label for="bdA">Alter</label><input class="input" id="bdA" inputmode="numeric" value="${b.age || ''}" placeholder="z. B. 25"></div>
+      </div>
+      <div class="field"><label>Geschlecht</label><div class="seg" id="bdS"><button data-v="m">Männlich</button><button data-v="f">Weiblich</button></div></div>
+      <div class="field"><label>Alltag (ohne Training)</label><div class="seg" id="bdAct">${Object.entries(ACTIVITY).map(([k, v]) => `<button data-v="${k}">${v[0]}</button>`).join('')}</div>
+        <span class="muted" id="bdActTxt" style="font-size:13px"></span></div>
+      <p class="muted" style="margin:0;font-size:13px">Dein Training wird über den Wochenplan automatisch eingerechnet.</p>
+      <button class="btn primary" id="bdSave">Speichern</button>`,
+  });
+  const mark = () => {
+    $$('#bdS button', el).forEach(x => x.classList.toggle('on', x.dataset.v === b.sex));
+    $$('#bdAct button', el).forEach(x => x.classList.toggle('on', x.dataset.v === b.activity));
+    el.querySelector('#bdActTxt').textContent = ACTIVITY[b.activity][2];
+  };
+  $$('#bdS button', el).forEach(x => x.onclick = () => { b.sex = x.dataset.v; mark(); });
+  $$('#bdAct button', el).forEach(x => x.onclick = () => { b.activity = x.dataset.v; mark(); });
+  mark();
+  el.querySelector('#bdSave').onclick = () => {
+    b.height = Math.round(num(el.querySelector('#bdH').value));
+    b.age = Math.round(num(el.querySelector('#bdA').value));
+    if (!(b.height >= 120 && b.height <= 230)) { toast('Bitte eine Größe zwischen 120 und 230 cm eingeben'); return; }
+    if (!(b.age >= 13 && b.age <= 100)) { toast('Bitte ein gültiges Alter eingeben'); return; }
+    if (!b.sex) { toast('Bitte das Geschlecht auswählen'); return; }
+    S.settings.body = b;
+    save(); closeSheet(el); renderWeight(); updateWeightDot(); toast('Körperdaten gespeichert');
+  };
 }

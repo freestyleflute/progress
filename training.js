@@ -301,6 +301,7 @@ function openSession(id) {
 
 /* ---------- Aktives Training ---------- */
 let woTick = null;
+let workoutLocked = false;
 
 function startWorkout(woId) {
   if (S.active) {
@@ -325,7 +326,7 @@ function newItem(exId, n = 3) {
 function showWorkout() {
   const box = document.getElementById('workout');
   box.hidden = false;
-  document.body.style.overflow = 'hidden';
+  if (!workoutLocked) { lockScroll(); workoutLocked = true; }
   drawWorkout();
   clearInterval(woTick);
   woTick = setInterval(() => {
@@ -335,7 +336,7 @@ function showWorkout() {
 }
 function hideWorkout() {
   document.getElementById('workout').hidden = true;
-  document.body.style.overflow = '';
+  if (workoutLocked) { unlockScroll(); workoutLocked = false; }
   clearInterval(woTick);
   if (currentTab === 'train') renderTrain();
 }

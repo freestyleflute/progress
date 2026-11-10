@@ -118,6 +118,8 @@ function openScanner({ onCode, onManual }) {
       <button class="scan-pill" data-manual>${I.keyboard}Eintippen</button>
     </div>`;
   document.body.appendChild(ov);
+  lockScroll();
+  blockTouchScroll(ov);
   try { scanAudio = scanAudio || new (window.AudioContext || window.webkitAudioContext)(); scanAudio.resume(); } catch (e) {}
   const video = ov.querySelector('video');
   const hint = ov.querySelector('.scan-hint');
@@ -126,7 +128,9 @@ function openScanner({ onCode, onManual }) {
   let stream = null, track = null, stopped = false, busy = false, frame = 0, done = false;
 
   const close = () => {
+    if (stopped) return;
     stopped = true;
+    unlockScroll();
     if (stream) stream.getTracks().forEach(t => t.stop());
     ov.classList.add('closing');
     setTimeout(() => ov.remove(), 200);
