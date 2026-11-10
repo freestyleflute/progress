@@ -181,6 +181,7 @@ function openExerciseStats(exId) {
 
     body.innerHTML = `
       ${ex ? `<p class="muted" style="margin:0;font-size:14px">${esc(musclesText(ex))}</p>` : ''}
+      ${(() => { const pr = progressionFor(exId); return pr ? `<div class="eyebrow">Nächstes Training</div>${progressionHTML(pr)}` : ''; })()}
       <div class="eyebrow">Rekorde</div>
       <div class="stats" style="grid-template-columns:repeat(2,1fr)">
         ${bodyweight ? '' : recTile('e1rm', 'Geschätztes 1RM', kgTxt(Math.round(b.e1rm.e1rm * 10) / 10), b.e1rm)}
@@ -237,4 +238,44 @@ function openAllStats() {
     }).join('')}</div>` : '<div class="empty">Noch keine Trainings gespeichert.</div>',
   });
   $$('[data-stat]', el).forEach(b => b.onclick = () => openExerciseStats(b.dataset.stat));
+}
+
+
+/* ---------- Progressionsvorschlag ----------
+   Regel: Wurden beim letzten Training in irgendeinem Satz 12+ Wiederholungen geschafft, mehr Gewicht.
+   +5 kg bei großen Beinübungen ab 40 kg, sonst +2,5 kg. Bei Übungen mit Unterstützung wird diese reduziert. */
+const PROG_REPS = 12;
+const LOWER_BODY = ['quads', 'hamstrings', 'glutes', 'adductors'];
+function progressionFor(exId, excludeId) {
+  const h = exerciseHistory(exId, excludeId);
+  if (!h.length) return null;
+  const last = h[h.length - 1];
+  const ex = S.exercises[exId] || {};
+  const name = ex.name || exName(exId);
+  const assisted = /unterstütz|assist/i.test(name);
+  const kgs = last.sets.map(x => x.kg).filter(x => x > 0);
+  const hit = last.sets.some(x => x.reps >= PROG_REPS);
+  const maxReps = Math.max(...last.sets.map(x => x.reps));
+  if (!kgs.length && !assisted) {
+    return hit
+      ? { type: 'bw', text: `${maxReps} Wdh geschafft. Nimm Zusatzgewicht (+2,5 kg) oder mach die Wiederholungen langsamer.` }
+      : { type: 'reps', text: `Ziel: mehr Wiederholungen als letztes Mal (${maxReps}), bis ${PROG_REPS}.` };
+  }
+  const base = assisted ? Math.min(...kgs) : Math.max(...kgs);
+  const lower = (ex.primary || []).some(m => LOWER_BODY.includes(m));
+  const inc = lower && base >= 40 ? 5 : 2.5;
+  const kgTxt = v => `${fmt(v, v % 1 ? 1 : 0)} kg`;
+  if (!hit) {
+    return { type: 'reps', kg: base, text: `Bleib bei ${kgTxt(base)} und schaff mehr Wiederholungen als letztes Mal (${maxReps}). Ab ${PROG_REPS} geht es hoch.` };
+  }
+  if (assisted) {
+    const kg = Math.max(0, base - inc);
+    return { type: 'up', kg, inc: -inc, text: `${PROG_REPS}+ geschafft! Weniger Unterstützung: ${kgTxt(kg)} (–${fmt(inc, inc % 1 ? 1 : 0)} kg)` };
+  }
+  const kg = base + inc;
+  return { type: 'up', kg, inc, text: `${PROG_REPS}+ geschafft! Heute ${kgTxt(kg)} (+${fmt(inc, inc % 1 ? 1 : 0)} kg)` };
+}
+function progressionHTML(p) {
+  if (!p) return '';
+  return `<div class="prog-tip ${p.type === 'up' ? 'up' : ''}">${p.type === 'up' ? I.up : I.right}<span>${esc(p.text)}</span></div>`;
 }

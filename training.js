@@ -35,6 +35,7 @@ function zoneColor(v) {
 }
 
 function renderTrain() {
+  setTimeout(() => { if (typeof injectBackupBanner === 'function') injectBackupBanner(); }, 0);
   const v = document.getElementById('view');
   const vol = weeklyVolume();
   const z = S.settings.zones;
@@ -363,6 +364,8 @@ function drawWorkout() {
         const last = lastPerformance(it.exId, a.id);
         const best = exerciseBests(it.exId, a.id);
         const bw = best && best.hist.every(r => r.maxKg === 0);
+        const prog = progressionFor(it.exId, a.id);
+        const kgHint = (pv) => prog && prog.kg != null ? String(prog.kg) : pv ? String(pv.kg) : 'kg';
         const isPR = st => st.done && best && (bw ? num(st.reps) > best.maxReps.maxReps : (e1rm(st.kg, st.reps) > best.e1rm.e1rm + 1e-9 || num(st.kg) > best.maxKg.maxKg));
         return `<div class="ex">
           <div class="ex-head">
@@ -370,13 +373,14 @@ function drawWorkout() {
             <button class="icon-btn" style="width:34px;height:34px" data-rmex="${i}" aria-label="Übung entfernen">${I.trash}</button>
           </div>
           <div class="ex-last">${last ? 'Letztes Mal: ' + last.map(setText).join(' · ') : 'Noch keine Vorwerte'}</div>
+          ${progressionHTML(prog)}
           <div class="sets">
             <span class="hd">Satz</span><span class="hd">Vorher</span><span class="hd">kg</span><span class="hd">Wdh</span><span class="hd">✓</span>
             ${it.sets.map((st, j) => {
               const pv = last && last[j];
               return `<span class="no">${isPR(st) ? `<span class="trophy" title="Neuer Rekord">${I.trophy}</span>` : j + 1}</span>
                 <span class="prev">${pv ? setText(pv) : '–'}</span>
-                <input class="input ${st.done ? 'dn' : ''}" inputmode="decimal" id="kg_${i}_${j}" data-kg="${i}:${j}" value="${esc(String(st.kg).replace('.', ','))}" placeholder="${pv ? esc(String(pv.kg)) : 'kg'}" aria-label="Gewicht Satz ${j + 1}">
+                <input class="input ${st.done ? 'dn' : ''}" inputmode="decimal" id="kg_${i}_${j}" data-kg="${i}:${j}" value="${esc(String(st.kg).replace('.', ','))}" placeholder="${esc(kgHint(pv).replace('.', ','))}" aria-label="Gewicht Satz ${j + 1}">
                 <input class="input ${st.done ? 'dn' : ''}" inputmode="numeric" id="rp_${i}_${j}" data-rp="${i}:${j}" value="${esc(st.reps)}" placeholder="${pv ? esc(String(pv.reps)) : 'Wdh'}" aria-label="Wiederholungen Satz ${j + 1}">
                 <button class="ck ${st.done ? 'on' : ''}" data-ck="${i}:${j}" aria-label="Satz ${j + 1} abhaken">${I.check}</button>`;
             }).join('')}
@@ -411,7 +415,7 @@ function drawWorkout() {
     const st = a.items[i].sets[j];
     if (!st.done) {
       const kgIn = $('#kg_' + i + '_' + j), rpIn = $('#rp_' + i + '_' + j);
-      if (st.kg === '' && kgIn.placeholder && kgIn.placeholder !== 'kg') st.kg = kgIn.placeholder;
+      if (st.kg === '' && kgIn.placeholder && kgIn.placeholder !== 'kg') st.kg = kgIn.placeholder.replace(',', '.');
       if (st.reps === '' && rpIn.placeholder && rpIn.placeholder !== 'Wdh') st.reps = rpIn.placeholder;
       if (st.reps === '' || !(num(st.reps) > 0)) { toast('Bitte Wiederholungen eintragen'); rpIn.focus(); return; }
       if (st.kg === '') st.kg = '0';

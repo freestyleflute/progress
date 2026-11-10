@@ -441,3 +441,21 @@ svg { display: block; }
 .rec .delta { font-size: 26px; }
 /* Scrollen bleibt im jeweiligen Fenster */
 .panel .pb, #workout .wb, .summary-ov, .wheel { overscroll-behavior: contain; }
+/* Progressionsvorschlag */
+.prog-tip { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--card2); font-size: 14px; font-weight: 500; color: var(--muted); }
+.prog-tip svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.prog-tip.up { background: var(--green-soft); color: var(--green); font-weight: 600; }
+/* Backup-Erinnerung */
+.backup-banner { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: var(--radius); background: var(--card); box-shadow: inset 0 0 0 1.5px var(--yellow); }
+.backup-banner .t b { display: block; font-size: 16px; }
+.backup-banner .t span { font-size: 14px; color: var(--muted); }
+.backup-banner .row { gap: 8px; }
+.backup-banner .row .btn { flex: 1; }
+/* Verlauf */
+.recent { display: flex; flex-direction: column; }
+.recent-day { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 14px 0 4px; }
+.recent-day + .list-item { border-top: 0; }
+.recent .add-btn { width: 36px; height: 36px; }
+.add-btn.added { background: var(--card2); color: var(--green); }
+.add-btn.added svg { stroke-width: 3; fill: none; stroke: currentColor; }
+#addSeg button { font-size: 13px; }

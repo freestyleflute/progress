@@ -170,6 +170,7 @@ function chartSVG(points, days) {
 }
 
 function renderWeight() {
+  setTimeout(() => { if (typeof injectBackupBanner === 'function') injectBackupBanner(); }, 0);
   const v = document.getElementById('view');
   const st = S.settings;
   const all = smooth(weightSeries());

@@ -81,6 +81,8 @@ function defaultState() {
       rate: { cut: 0.5, bulk: 0.25 },
       lastAdjust: null,
       dismissedRec: null,
+      createdAt: Date.now(),
+      lastBackup: null,
     },
     products: {},
     meals: {},
@@ -113,6 +115,7 @@ function migrate(data) {
   out.settings.goals = Object.assign(defaultState().settings.goals, (data.settings || {}).goals || {});
   out.settings.zones = Object.assign(defaultState().settings.zones, (data.settings || {}).zones || {});
   out.settings.rate = Object.assign(defaultState().settings.rate, (data.settings || {}).rate || {});
+  if (!out.settings.createdAt) out.settings.createdAt = Date.now();
   return out;
 }
 

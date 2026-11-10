@@ -30,6 +30,7 @@ function dayTotals(key) {
 }
 
 function renderFood() {
+  setTimeout(() => { if (typeof injectBackupBanner === 'function') injectBackupBanner(); }, 0);
   const v = document.getElementById('view');
   const g = S.settings.goals;
   const d = dayEntries(foodDay);
@@ -122,12 +123,13 @@ function openAddFood(meal) {
   const el = openSheet({
     title: `${mealName} hinzufügen`,
     body: `<div class="seg" id="addSeg">
+        <button data-mode="recent">Verlauf</button>
         <button data-mode="scan">Scannen</button>
         <button data-mode="mine">Produkte</button>
         <button data-mode="meals">Mahlzeiten</button>
-        <button data-mode="manual">Manuell</button>
       </div>
-      <div id="addBody"></div>`,
+      <div id="addBody"></div>
+      <button class="btn" id="addManual">${I.edit}Neues Produkt manuell anlegen</button>`,
     onClose: () => stopScanner(),
   });
   const body = el.querySelector('#addBody');
@@ -138,13 +140,11 @@ function openAddFood(meal) {
     if (m === 'scan') renderScan(body, meal, el, auto);
     if (m === 'mine') renderMine(body, meal, el);
     if (m === 'meals') renderSavedMeals(body, meal, el);
-    if (m === 'manual') openProductForm({ meal, product: null, parent: el });
+    if (m === 'recent') renderRecent(body, meal, el);
   };
-  $$('#addSeg button', el).forEach(b => b.onclick = () => {
-    if (b.dataset.mode === 'manual') { openProductForm({ meal, product: null, parent: el }); return; }
-    show(b.dataset.mode);
-  });
-  show(Object.keys(S.products).length ? 'mine' : 'scan', false);
+  $$('#addSeg button', el).forEach(b => b.onclick = () => show(b.dataset.mode));
+  el.querySelector('#addManual').onclick = () => openProductForm({ meal, product: null, parent: el });
+  show(recentEntries(1).length ? 'recent' : 'scan', false);
 }
 
 /* Scanner: Vollbild-Kamera (scanner.js). Im Sheet gibt es Start, Foto und Eintippen. */
@@ -252,7 +252,7 @@ function renderMine(body, meal, sheetEl) {
 }
 
 /* Produktformular: Werte pro 100 g + Menge */
-function openProductForm({ meal, product, parent, isNew }) {
+function openProductForm({ meal, product, parent, isNew, grams }) {
   const p = product ? JSON.parse(JSON.stringify(product)) : { name: '', brand: '', barcode: '', per100: {} };
   const exists = p.id && S.products[p.id];
   const mealName = MEALS.find(x => x[0] === meal)[1];
@@ -275,7 +275,7 @@ function openProductForm({ meal, product, parent, isNew }) {
   const amount = `
       <div class="eyebrow">Menge</div>
       <div class="chips" id="pfQuick"></div>
-      <div class="field"><label for="pfGrams">Gramm</label><input class="input" id="pfGrams" inputmode="decimal" value="${p.serving ? fmt(p.serving) : 100}"></div>
+      <div class="field"><label for="pfGrams">Gramm</label><input class="input" id="pfGrams" inputmode="decimal" value="${grams ? fmt(grams, grams % 1 ? 1 : 0) : p.serving ? fmt(p.serving) : 100}"></div>
       <div class="card" style="background:var(--card);padding:14px" id="pfPreview"></div>
       <button class="btn primary" id="pfAdd">${I.plus}Zu ${esc(mealName)} hinzufügen</button>`;
   const el = openSheet({
@@ -504,4 +504,75 @@ function openSavedMeal(id, mealKey, parentSheet, parentBody) {
       delete S.meals[id]; save(); closeSheet(el); renderSavedMeals(parentBody, mealKey, parentSheet);
     }
   };
+}
+
+
+/* ---------- Verlauf: zuletzt getrackte Lebensmittel, nach Tagen ---------- */
+function recentEntries(days = 14) {
+  const out = [];
+  for (let i = 0; i < 60 && out.length < 200; i++) {
+    const k = addDays(dayKey(), -i);
+    if (i >= days && out.length) break;
+    const d = S.diary[k];
+    if (!d) continue;
+    MEALS.forEach(([m]) => (d[m] || []).forEach(e => out.push({ day: k, meal: m, e })));
+  }
+  return out;
+}
+
+function renderRecent(body, meal, sheetEl) {
+  const items = recentEntries(14);
+  if (!items.length) {
+    body.innerHTML = '<div class="empty">Hier erscheint alles, was du in den letzten Tagen eingetragen hast. Ein Tipp auf + trägt es erneut ein.</div>';
+    return;
+  }
+  const mealLbl = Object.fromEntries(MEALS);
+  const byDay = [];
+  items.forEach(x => {
+    let g = byDay[byDay.length - 1];
+    if (!g || g.day !== x.day) { g = { day: x.day, list: [] }; byDay.push(g); }
+    g.list.push(x);
+  });
+  // Innerhalb eines Tages die zuletzt eingetragenen zuerst
+  byDay.forEach(g => g.list.reverse());
+  body.innerHTML = `<input class="input" id="rSearch" type="search" placeholder="Im Verlauf suchen" autocomplete="off">
+    <div id="rList" class="recent"></div>`;
+  const draw = () => {
+    const q = body.querySelector('#rSearch').value.trim().toLowerCase();
+    let idx = 0;
+    const html = byDay.map(g => {
+      const rows = g.list.filter(x => !q || (x.e.name + ' ' + (x.e.brand || '')).toLowerCase().includes(q));
+      if (!rows.length) return '';
+      return `<div class="recent-day">${prettyDay(g.day)}</div>` + rows.map(x => {
+        const n = entryNutrients(x.e);
+        const id = idx++;
+        return `<div class="list-item">
+          <button class="t" data-ropen="${x.day}|${x.meal}|${x.e.id}"><b>${esc(x.e.name)}</b><span class="num">${fmt(x.e.grams)} g · ${fmt(n.kcal)} kcal · ${fmt(n.protein)} g Protein · ${mealLbl[x.meal]}</span></button>
+          <button class="add-btn" data-radd="${x.day}|${x.meal}|${x.e.id}" aria-label="${esc(x.e.name)} erneut hinzufügen">${I.plus}</button>
+        </div>`;
+      }).join('');
+    }).join('');
+    body.querySelector('#rList').innerHTML = html || '<div class="empty">Nichts gefunden.</div>';
+    const find = (key) => { const [d, m, id] = key.split('|'); return ((S.diary[d] || {})[m] || []).find(e => e.id === id); };
+    $$('[data-radd]', body).forEach(b => b.onclick = () => {
+      const e = find(b.dataset.radd);
+      if (!e) return;
+      const day = S.diary[foodDay] || (S.diary[foodDay] = {});
+      (day[meal] || (day[meal] = [])).push({ id: uid(), pid: e.pid, name: e.name, brand: e.brand || '', grams: e.grams, per100: { ...e.per100 } });
+      if (e.pid && S.products[e.pid]) S.products[e.pid].lastUsed = Date.now();
+      save(); haptic();
+      b.classList.add('added');
+      b.innerHTML = I.check;
+      renderFood();
+      toast(`${e.name} hinzugefügt`);
+    });
+    $$('[data-ropen]', body).forEach(b => b.onclick = () => {
+      const e = find(b.dataset.ropen);
+      if (!e) return;
+      const prod = (e.pid && S.products[e.pid]) || { name: e.name, brand: e.brand || '', barcode: '', per100: { ...e.per100 } };
+      openProductForm({ meal, product: { ...prod, serving: prod.serving || null }, parent: sheetEl, grams: e.grams });
+    });
+  };
+  body.querySelector('#rSearch').oninput = draw;
+  draw();
 }

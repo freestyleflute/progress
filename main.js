@@ -11,6 +11,7 @@ function setTab(t) {
   if (t === 'food') renderFood();
   if (t === 'train') renderTrain();
   if (t === 'weight') renderWeight();
+  injectBackupBanner();
   window.scrollTo(0, 0);
 }
 
@@ -49,6 +50,7 @@ function openSettings(section) {
 
       <div class="eyebrow" style="margin-top:8px">Daten</div>
       <p class="muted" style="margin:0;font-size:14px">Alle Daten liegen nur auf diesem iPhone. Exportiere regelmäßig ein Backup, z. B. in die Dateien-App oder iCloud.</p>
+      <p style="margin:0;font-size:14px;font-weight:600">${backupLabel()}</p>
       <button class="btn" id="expBtn">Backup exportieren</button>
       <label class="btn" for="impFile" style="cursor:pointer">Backup importieren</label>
       <input type="file" id="impFile" accept="application/json,.json" hidden>
@@ -97,6 +99,7 @@ async function exportBackup() {
     const file = new File([blob], name, { type: 'application/json' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: 'Progress Backup' });
+      markBackup();
       return;
     }
   } catch (e) {
@@ -107,7 +110,53 @@ async function exportBackup() {
   a.download = name;
   document.body.appendChild(a);
   a.click();
+  markBackup();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/* ---------- Backup-Erinnerung ---------- */
+const BACKUP_DAYS = 7;
+function markBackup() {
+  S.settings.lastBackup = Date.now();
+  S.settings.backupSnooze = null;
+  saveNow();
+  toast('Backup erstellt');
+  const b = document.getElementById('backupBanner');
+  if (b) b.remove();
+}
+function backupDue() {
+  const st = S.settings;
+  const hasData = S.sessions.length || Object.keys(S.diary).length || Object.keys(S.weights).length;
+  if (!hasData) return null;
+  if (st.backupSnooze && Date.now() < st.backupSnooze) return null;
+  const now = Date.now();
+  if (st.lastBackup) {
+    const days = Math.floor((now - st.lastBackup) / 86400000);
+    return days >= BACKUP_DAYS ? days : null;
+  }
+  const since = Math.floor((now - (st.createdAt || now)) / 86400000);
+  return since >= 3 ? -1 : null;
+}
+function backupLabel() {
+  const lb = S.settings.lastBackup;
+  if (!lb) return 'Noch kein Backup erstellt';
+  const d = new Date(lb);
+  const days = Math.floor((Date.now() - lb) / 86400000);
+  return `Letztes Backup: ${d.getDate()}. ${MON[d.getMonth()]} ${d.getFullYear()}${days ? ` (vor ${days} ${days === 1 ? 'Tag' : 'Tagen'})` : ' (heute)'}`;
+}
+function injectBackupBanner() {
+  const due = backupDue();
+  const head = document.querySelector('#view .head');
+  if (due == null || !head || document.getElementById('backupBanner')) return;
+  const el = document.createElement('section');
+  el.className = 'backup-banner';
+  el.id = 'backupBanner';
+  el.innerHTML = `<div class="t"><b>${due < 0 ? 'Sichere deine Daten' : `Letztes Backup vor ${due} Tagen`}</b>
+      <span>Alles liegt nur auf diesem iPhone. Ein Backup in iCloud oder der Dateien-App schützt deinen Fortschritt.</span></div>
+    <div class="row"><button class="btn small primary" data-bk>Jetzt sichern</button><button class="btn small" data-later>Später</button></div>`;
+  head.after(el);
+  el.querySelector('[data-bk]').onclick = exportBackup;
+  el.querySelector('[data-later]').onclick = () => { S.settings.backupSnooze = Date.now() + 2 * 86400000; save(); el.remove(); };
 }
 
 function importBackup(file, sheetEl) {
