@@ -131,11 +131,11 @@ function openAddFood(meal) {
     onClose: () => stopScanner(),
   });
   const body = el.querySelector('#addBody');
-  const show = (m) => {
+  const show = (m, auto = true) => {
     mode = m;
     $$('#addSeg button', el).forEach(b => b.classList.toggle('on', b.dataset.mode === m));
     stopScanner();
-    if (m === 'scan') renderScan(body, meal, el);
+    if (m === 'scan') renderScan(body, meal, el, auto);
     if (m === 'mine') renderMine(body, meal, el);
     if (m === 'meals') renderSavedMeals(body, meal, el);
     if (m === 'manual') openProductForm({ meal, product: null, parent: el });
@@ -144,83 +144,36 @@ function openAddFood(meal) {
     if (b.dataset.mode === 'manual') { openProductForm({ meal, product: null, parent: el }); return; }
     show(b.dataset.mode);
   });
-  show(Object.keys(S.products).length ? 'mine' : 'scan');
+  show(Object.keys(S.products).length ? 'mine' : 'scan', false);
 }
 
-/* Scanner (html5-qrcode, beim ersten Gebrauch aus dem Netz geladen und danach offline gespeichert) */
-const SCANNER_LIB = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
-let scannerInstance = null;
-let scannerLoading = null;
-function loadScannerLib() {
-  if (window.Html5Qrcode) return Promise.resolve();
-  if (scannerLoading) return scannerLoading;
-  scannerLoading = new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = SCANNER_LIB;
-    s.onload = res;
-    s.onerror = () => { scannerLoading = null; rej(new Error('lib')); };
-    document.head.appendChild(s);
-  });
-  return scannerLoading;
-}
+/* Scanner: Vollbild-Kamera (scanner.js). Im Sheet gibt es Start, Foto und Eintippen. */
+let activeScanner = null;
 function stopScanner() {
-  const inst = scannerInstance;
-  scannerInstance = null;
-  if (inst) {
-    try { inst.stop().then(() => inst.clear()).catch(() => {}); } catch (e) {}
-  }
+  if (activeScanner) { activeScanner.close(); activeScanner = null; }
 }
 
-function renderScan(body, meal, sheetEl) {
+function renderScan(body, meal, sheetEl, autoStart = true) {
   body.innerHTML = `
-    <div class="scanner"><div id="qrReader"></div><div class="scan-line"></div></div>
-    <p class="scan-msg" id="scanMsg">Kamera wird gestartet …</p>
+    <button class="scan-start" id="scanStart">${I.barcode}<b>Barcode scannen</b><span>Kamera im Vollbild öffnen</span></button>
     <div class="row">
       <input class="input" id="codeInput" inputmode="numeric" pattern="[0-9]*" placeholder="Barcode eintippen" autocomplete="off">
       <button class="btn small primary" id="codeGo" style="flex:none">Suchen</button>
     </div>`;
-  const msg = body.querySelector('#scanMsg');
+  const start = () => {
+    activeScanner = openScanner({
+      onCode: (code) => { activeScanner = null; handleBarcode(code, meal, sheetEl); },
+      onManual: () => { activeScanner = null; setTimeout(() => body.querySelector('#codeInput').focus(), 250); },
+    });
+  };
+  body.querySelector('#scanStart').onclick = start;
   body.querySelector('#codeGo').onclick = () => {
-    const code = body.querySelector('#codeInput').value.replace(/\D/g, '');
+    const code = normalizeCode(body.querySelector('#codeInput').value);
     if (code.length >= 6) handleBarcode(code, meal, sheetEl);
     else toast('Bitte einen gültigen Barcode eingeben');
   };
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    msg.textContent = 'Kamera nicht verfügbar. Barcode bitte eintippen.';
-    body.querySelector('.scan-line').hidden = true;
-    return;
-  }
-  loadScannerLib().then(() => {
-    if (!document.body.contains(body.querySelector('#qrReader'))) return;
-    const F = window.Html5QrcodeSupportedFormats;
-    const inst = new Html5Qrcode('qrReader', {
-      formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128],
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-      verbose: false,
-    });
-    scannerInstance = inst;
-    let handled = false;
-    inst.start(
-      { facingMode: 'environment' },
-      { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.8), height: Math.floor(h * 0.4) }), aspectRatio: 4 / 3 },
-      (text) => {
-        if (handled) return;
-        handled = true;
-        haptic();
-        stopScanner();
-        handleBarcode(text.replace(/\D/g, '') || text, meal, sheetEl);
-      },
-      () => {}
-    ).then(() => {
-      msg.textContent = 'Halte den Barcode in den Rahmen.';
-    }).catch(() => {
-      msg.textContent = 'Kein Kamerazugriff. Erlaube die Kamera in den iPhone-Einstellungen oder tippe den Barcode ein.';
-      body.querySelector('.scan-line').hidden = true;
-    });
-  }).catch(() => {
-    msg.textContent = 'Scanner konnte nicht geladen werden (keine Internetverbindung). Barcode bitte eintippen.';
-    body.querySelector('.scan-line').hidden = true;
-  });
+  loadZXing().catch(() => {});
+  if (autoStart) start();
 }
 
 function findProductByBarcode(code) {
