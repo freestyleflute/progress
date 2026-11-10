@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>Progress</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Progress">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <main id="view"></main>
+  <nav id="tabbar">
+    <button data-tab="food" class="tab"><svg viewBox="0 0 24 24"><path d="M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M17 3c-2 1.5-3 4-3 7h3v11"/></svg><span>Ernährung</span></button>
+    <button data-tab="train" class="tab"><svg viewBox="0 0 24 24"><path d="M6 7v10M3 9v6M18 7v10M21 9v6M6 12h12"/></svg><span>Training</span></button>
+    <button data-tab="weight" class="tab"><svg viewBox="0 0 24 24"><path d="M4 19 9 12l4 3 7-9"/><path d="M15 6h5v5"/></svg><span>Gewicht</span><i class="dot" id="weightDot" hidden></i></button>
+  </nav>
+</div>
+<div id="sheets"></div>
+<div id="workout" hidden></div>
+<div id="toast" hidden></div>
+<script src="js/store.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/bodymap.js"></script>
+<script src="js/nutrition.js"></script>
+<script src="js/training.js"></script>
+<script src="js/weight.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
