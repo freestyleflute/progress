@@ -98,7 +98,8 @@ function renderFood() {
             <div class="t"><b>${esc(e.name)}</b><span>${fmt(e.grams)} g${e.brand ? ' · ' + esc(e.brand) : ''}</span></div>
             <span class="k">${fmt(n.kcal)} kcal</span>
           </button>`;
-        }).join('')}</div>` : ''}
+        }).join('')}</div>
+        <button class="btn small save-meal" data-savemeal="${m}">${I.bookmark}Als Mahlzeit speichern</button>` : ''}
       </section>`;
     }).join('')}
   `;
@@ -107,6 +108,7 @@ function renderFood() {
   $('#dNext').onclick = () => { foodDay = addDays(foodDay, 1); renderFood(); };
   $('#goalsBtn').onclick = () => openSettings();
   $$('[data-add]').forEach(b => b.onclick = () => openAddFood(b.dataset.add));
+  $$('[data-savemeal]').forEach(b => b.onclick = () => openSaveMeal(b.dataset.savemeal));
   $$('[data-entry]').forEach(b => b.onclick = () => {
     const [m, id] = b.dataset.entry.split(':');
     openEntry(m, id);
@@ -121,7 +123,8 @@ function openAddFood(meal) {
     title: `${mealName} hinzufügen`,
     body: `<div class="seg" id="addSeg">
         <button data-mode="scan">Scannen</button>
-        <button data-mode="mine">Meine Produkte</button>
+        <button data-mode="mine">Produkte</button>
+        <button data-mode="meals">Mahlzeiten</button>
         <button data-mode="manual">Manuell</button>
       </div>
       <div id="addBody"></div>`,
@@ -134,6 +137,7 @@ function openAddFood(meal) {
     stopScanner();
     if (m === 'scan') renderScan(body, meal, el);
     if (m === 'mine') renderMine(body, meal, el);
+    if (m === 'meals') renderSavedMeals(body, meal, el);
     if (m === 'manual') openProductForm({ meal, product: null, parent: el });
   };
   $$('#addSeg button', el).forEach(b => b.onclick = () => {
@@ -441,5 +445,110 @@ function openEntry(meal, id) {
     const day = S.diary[foodDay];
     day[meal] = day[meal].filter(x => x.id !== id);
     save(); closeSheet(el); renderFood(); toast('Eintrag gelöscht');
+  };
+}
+
+
+/* ---------- Gespeicherte Mahlzeiten ---------- */
+function savedMealTotals(sm, factor = 1) {
+  return sumEntries(sm.items.map(it => ({ grams: it.grams * factor, per100: it.per100 })));
+}
+
+function openSaveMeal(mealKey) {
+  const list = dayEntries(foodDay)[mealKey];
+  if (!list.length) return;
+  const label = MEALS.find(x => x[0] === mealKey)[1];
+  const t = sumEntries(list);
+  const el = openSheet({
+    title: 'Mahlzeit speichern',
+    body: `
+      <div class="field"><label for="smName">Name</label><input class="input" id="smName" placeholder="z. B. Protein-Frühstück" value=""></div>
+      <p class="muted" style="margin:0;font-size:14px">${list.length} Lebensmittel aus ${esc(label)} · ${fmt(t.kcal)} kcal · ${fmt(t.protein)} g Protein</p>
+      <div class="list">${list.map(e => `<div class="list-item"><div class="t"><b>${esc(e.name)}</b><span>${fmt(e.grams)} g</span></div><span class="muted num">${fmt(entryNutrients(e).kcal)} kcal</span></div>`).join('')}</div>
+      <button class="btn primary" id="smSave">${I.bookmark}Speichern</button>`,
+  });
+  setTimeout(() => el.querySelector('#smName').focus(), 350);
+  el.querySelector('#smSave').onclick = () => {
+    const name = el.querySelector('#smName').value.trim();
+    if (!name) { toast('Bitte einen Namen eingeben'); return; }
+    const id = uid();
+    S.meals[id] = {
+      id, name, created: Date.now(), lastUsed: Date.now(),
+      items: list.map(e => ({ pid: e.pid, name: e.name, brand: e.brand || '', grams: e.grams, per100: { ...e.per100 } })),
+    };
+    save(); closeSheet(el); toast(`„${name}“ gespeichert`);
+  };
+}
+
+function addSavedMeal(id, mealKey, factor = 1) {
+  const sm = S.meals[id];
+  const day = S.diary[foodDay] || (S.diary[foodDay] = {});
+  const arr = day[mealKey] || (day[mealKey] = []);
+  sm.items.forEach(it => arr.push({ id: uid(), pid: it.pid, name: it.name, brand: it.brand, grams: Math.round(it.grams * factor * 10) / 10, per100: { ...it.per100 } }));
+  sm.lastUsed = Date.now();
+  save(); haptic();
+}
+
+function renderSavedMeals(body, mealKey, sheetEl) {
+  const items = Object.values(S.meals).sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+  body.innerHTML = items.length ? `<div class="list">${items.map(sm => {
+    const t = savedMealTotals(sm);
+    return `<div class="list-item">
+      <button class="t" data-smopen="${sm.id}" style="text-align:left"><b>${esc(sm.name)}</b><span>${sm.items.length} Lebensmittel · ${fmt(t.kcal)} kcal · ${fmt(t.protein)} g Protein</span></button>
+      <button class="add-btn" data-smadd="${sm.id}" aria-label="${esc(sm.name)} hinzufügen">${I.plus}</button>
+    </div>`;
+  }).join('')}</div>`
+    : `<div class="empty">Noch keine Mahlzeiten gespeichert. Trag die Lebensmittel einmal normal ein und tippe dann in der Mahlzeit auf „Als Mahlzeit speichern“.</div>`;
+  $$('[data-smadd]', body).forEach(b => b.onclick = () => {
+    const sm = S.meals[b.dataset.smadd];
+    addSavedMeal(sm.id, mealKey);
+    closeSheet(sheetEl); renderFood(); toast(`${sm.name} hinzugefügt`);
+  });
+  $$('[data-smopen]', body).forEach(b => b.onclick = () => openSavedMeal(b.dataset.smopen, mealKey, sheetEl, body));
+}
+
+function openSavedMeal(id, mealKey, parentSheet, parentBody) {
+  const sm = S.meals[id];
+  const mealName = MEALS.find(x => x[0] === mealKey)[1];
+  let factor = 1;
+  const el = openSheet({
+    title: sm.name,
+    body: `
+      <div class="field"><label>Portion</label>
+        <div class="seg" id="smFactor">${[0.5, 1, 1.5, 2].map(f => `<button data-f="${f}" class="${f === 1 ? 'on' : ''}">${fmt(f, f % 1 ? 1 : 0)}×</button>`).join('')}</div></div>
+      <div class="card" style="padding:14px" id="smTot"></div>
+      <div class="list" id="smItems"></div>
+      <button class="btn primary" id="smAdd">${I.plus}Zu ${esc(mealName)} hinzufügen</button>
+      <div class="field"><label for="smRename">Name ändern</label><input class="input" id="smRename" value="${esc(sm.name)}"></div>
+      <button class="btn" id="smRenameBtn">Namen speichern</button>
+      <button class="btn danger" id="smDel">${I.trash}Mahlzeit löschen</button>`,
+  });
+  const draw = () => {
+    const t = savedMealTotals(sm, factor);
+    el.querySelector('#smTot').innerHTML = `<div class="summary" style="grid-template-columns:repeat(4,1fr);gap:6px">
+      <div class="side"><b>${fmt(t.kcal)}</b><span>kcal</span></div><div class="side"><b>${fmt(t.protein)}</b><span>Protein</span></div>
+      <div class="side"><b>${fmt(t.carbs)}</b><span>Kohlenh.</span></div><div class="side"><b>${fmt(t.fat)}</b><span>Fett</span></div></div>`;
+    el.querySelector('#smItems').innerHTML = sm.items.map((it, i) => `<div class="list-item"><div class="t"><b>${esc(it.name)}</b><span class="num">${fmt(it.grams * factor, (it.grams * factor) % 1 ? 1 : 0)} g</span></div>
+      <button class="icon-btn" style="width:32px;height:32px;color:var(--red)" data-rmit="${i}" aria-label="Aus Mahlzeit entfernen">${I.close}</button></div>`).join('');
+    $$('[data-rmit]', el).forEach(b => b.onclick = () => {
+      if (sm.items.length <= 1) { toast('Eine Mahlzeit braucht mindestens ein Lebensmittel'); return; }
+      sm.items.splice(+b.dataset.rmit, 1); save(); draw();
+    });
+  };
+  draw();
+  $$('#smFactor button', el).forEach(b => b.onclick = () => { factor = num(b.dataset.f); $$('#smFactor button', el).forEach(x => x.classList.toggle('on', x === b)); draw(); });
+  el.querySelector('#smAdd').onclick = () => {
+    addSavedMeal(id, mealKey, factor);
+    closeSheet(el); closeSheet(parentSheet); renderFood(); toast(`${sm.name} hinzugefügt`);
+  };
+  el.querySelector('#smRenameBtn').onclick = () => {
+    const n = el.querySelector('#smRename').value.trim();
+    if (!n) { toast('Bitte einen Namen eingeben'); return; }
+    sm.name = n; save(); toast('Name gespeichert'); renderSavedMeals(parentBody, mealKey, parentSheet);
+  };
+  el.querySelector('#smDel').onclick = async () => {
+    if (await confirmSheet({ title: 'Mahlzeit löschen?', text: `„${sm.name}“ wird gelöscht. Bereits eingetragene Lebensmittel bleiben erhalten.` })) {
+      delete S.meals[id]; save(); closeSheet(el); renderSavedMeals(parentBody, mealKey, parentSheet);
+    }
   };
 }

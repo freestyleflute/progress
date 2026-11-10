@@ -59,6 +59,7 @@ function renderTrain() {
     ${S.active ? `<button class="wcard" id="resumeBtn" style="background:var(--green-soft);box-shadow:inset 0 0 0 1.5px var(--green)">
         <div class="t"><b>${esc(S.active.name)} läuft</b><span>Seit ${fmtDuration(Date.now() - S.active.start)} · tippen zum Fortsetzen</span></div>
         <span class="play">${I.play}</span></button>` : ''}
+    ${todayCardHTML()}
     <section class="card mapcard">
       <div class="card-title">
         <div><h2>Muskeln diese Woche</h2></div>
@@ -83,11 +84,13 @@ function renderTrain() {
       </div>` : ''}
     </section>
     <section class="card">
-      <div class="card-title"><h2>Diese Woche</h2><span class="sub">${S.sessions.filter(s => new Date(s.start) >= ws).length} Trainings</span></div>
-      <div class="week">${days.map(d => {
+      <div class="card-title"><h2>Wochenplan</h2><button class="btn small" id="planBtn">${I.calendar}Bearbeiten</button></div>
+      <div class="week">${days.map((d, i) => {
         const k = dayKey(d);
-        return `<div class="d ${trainedDays.has(k) ? 'done' : ''} ${k === todayK ? 'today' : ''}">${WD[d.getDay()]}<i>${d.getDate()}</i></div>`;
+        const w = S.workouts[S.plan[i]];
+        return `<div class="d ${trainedDays.has(k) ? 'done' : ''} ${k === todayK ? 'today' : ''}">${WD[d.getDay()]}<i>${d.getDate()}</i><small class="plan-lbl ${w ? '' : 'rest'}">${w ? esc(w.name) : 'Ruhe'}</small></div>`;
       }).join('')}</div>
+      <span class="muted" style="font-size:13px">${S.sessions.filter(s => new Date(s.start) >= ws).length} Trainings diese Woche · grün = trainiert</span>
     </section>
     ${prCardHTML()}
     <section class="card">
@@ -115,6 +118,9 @@ function renderTrain() {
   $('#exLibBtn').onclick = () => openExerciseLibrary();
   $('#trSetBtn').onclick = () => openSettings('training');
   $('#newWo').onclick = () => openWorkoutEditor(null);
+  $('#planBtn').onclick = openPlanEditor;
+  if ($('#todayStart')) $('#todayStart').onclick = () => startWorkout($('#todayStart').dataset.wo);
+  if ($('#todayPlan')) $('#todayPlan').onclick = openPlanEditor;
   $('#emptyWo').onclick = () => startWorkout(null);
   if ($('#resumeBtn')) $('#resumeBtn').onclick = () => showWorkout();
   $$('[data-edit-wo]').forEach(b => b.onclick = () => openWorkoutEditor(b.dataset.editWo));
@@ -252,7 +258,9 @@ function openWorkoutEditor(id) {
   };
   if (id) el.querySelector('#woDel').onclick = async () => {
     if (await confirmSheet({ title: 'Training löschen?', text: `„${w.name}“ wird gelöscht. Dein Verlauf bleibt erhalten.` })) {
-      delete S.workouts[id]; save(); closeSheet(el); renderTrain();
+      delete S.workouts[id];
+      Object.keys(S.plan).forEach(k => { if (S.plan[k] === id) delete S.plan[k]; });
+      save(); closeSheet(el); renderTrain();
     }
   };
 }
@@ -538,4 +546,64 @@ function beep() {
       o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + 0.16);
     });
   } catch (e) {}
+}
+
+
+/* ---------- Wochenplan ---------- */
+const WD_LONG = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+function todayIdx() { return (new Date().getDay() + 6) % 7; }
+
+function todayCardHTML() {
+  const hasPlan = Object.values(S.plan).some(id => S.workouts[id]);
+  const idx = todayIdx();
+  if (!hasPlan) {
+    if (!Object.keys(S.workouts).length) return '';
+    return `<button class="wcard" id="todayPlan">
+      <div class="t"><b>Wochenplan anlegen</b><span>Leg fest, an welchem Tag du welches Training machst</span></div>
+      <span class="trophy">${I.calendar}</span></button>`;
+  }
+  const w = S.workouts[S.plan[idx]];
+  const todayK = dayKey();
+  const doneToday = S.sessions.some(s => dayKey(new Date(s.start)) === todayK && (!w || s.workoutId === w.id));
+  // Nächstes geplantes Training
+  let next = null;
+  for (let i = 1; i <= 7 && !next; i++) { const nw = S.workouts[S.plan[(idx + i) % 7]]; if (nw) next = [i, nw]; }
+  const nextTxt = next ? `Nächstes: ${esc(next[1].name)} ${next[0] === 1 ? 'morgen' : 'am ' + WD_LONG[(idx + next[0]) % 7]}` : '';
+  if (!w) {
+    return `<section class="card today-card rest">
+      <div class="eyebrow">Heute · ${WD_LONG[idx]}</div>
+      <div class="today-row"><div class="t"><b>Ruhetag</b><span>${doneToday ? 'Du hast heute trotzdem trainiert. ' : 'Erholung gehört zum Wachstum. '}${nextTxt}</span></div></div>
+    </section>`;
+  }
+  return `<section class="card today-card">
+    <div class="eyebrow">Heute · ${WD_LONG[idx]}</div>
+    <div class="today-row">
+      <div class="t"><b>${esc(w.name)}</b><span>${doneToday ? 'Erledigt, stark! ' + nextTxt : `${w.items.length} Übungen · ${w.items.reduce((a, it) => a + it.sets, 0)} Sätze`}</span></div>
+      ${doneToday ? `<span class="play done">${I.check}</span>` : `<button class="play" id="todayStart" data-wo="${w.id}" aria-label="${esc(w.name)} starten">${I.play}</button>`}
+    </div>
+  </section>`;
+}
+
+function openPlanEditor() {
+  const workouts = Object.values(S.workouts).sort((a, b) => (a.order || 0) - (b.order || 0));
+  if (!workouts.length) { toast('Erstelle zuerst ein Training unter „Meine Trainings“'); return; }
+  const plan = { ...S.plan };
+  const el = openSheet({
+    title: 'Wochenplan',
+    body: `<p class="muted" style="margin:0;font-size:14px">Wähle für jeden Tag ein Training oder einen Ruhetag. Der Plan gilt jede Woche.</p>
+      <div class="list">${WD_LONG.map((name, i) => `
+        <div class="list-item plan-row">
+          <div class="t"><b>${name}</b></div>
+          <select class="input" id="plan_${i}" style="width:58%;flex:none">
+            <option value="">Ruhetag</option>
+            ${workouts.map(w => `<option value="${w.id}" ${plan[i] === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+          </select>
+        </div>`).join('')}</div>
+      <button class="btn primary" id="planSave">Plan speichern</button>`,
+  });
+  el.querySelector('#planSave').onclick = () => {
+    const np = {};
+    for (let i = 0; i < 7; i++) { const v = el.querySelector('#plan_' + i).value; if (v) np[i] = v; }
+    S.plan = np; save(); closeSheet(el); renderTrain(); toast('Wochenplan gespeichert');
+  };
 }

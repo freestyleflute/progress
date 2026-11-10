@@ -22,6 +22,9 @@ const I = {
   apple: '<svg viewBox="0 0 24 24"><path d="M12 7c-1.5-1.5-6-2-7 2.5S6.5 20 9 20c1.3 0 1.8-.6 3-.6s1.7.6 3 .6c2.5 0 5-6 4-10.5S13.5 5.5 12 7zM12 7c0-2 1-3.5 3-4"/></svg>',
   trophy: '<svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg>',
   chart: '<svg viewBox="0 0 24 24"><path d="M4 19 9 12l4 3 7-9"/><path d="M4 4v15h16"/></svg>',
+  bookmark: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg>',
+  upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
 };
 

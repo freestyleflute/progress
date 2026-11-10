@@ -83,6 +83,8 @@ function defaultState() {
       dismissedRec: null,
     },
     products: {},
+    meals: {},
+    plan: {},
     diary: {},
     exercises,
     workouts: {},

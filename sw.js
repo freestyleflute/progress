@@ -1,8 +1,8 @@
 /* Service Worker: macht die App offline nutzbar. Bei Updates CACHE-Version erhöhen. */
-const CACHE = 'progress-v2';
+const CACHE = 'progress-v3';
 const APP = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'store.js', 'ui.js', 'bodymap.js', 'nutrition.js', 'training.js', 'weight.js', 'stats.js', 'main.js',
+  'store.js', 'ui.js', 'bodymap.js', 'nutrition.js', 'training.js', 'weight.js', 'stats.js', 'csvimport.js', 'main.js',
   'apple-touch-icon.png', 'icon-192.png', 'icon-512.png',
 ];
 const LIB = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';

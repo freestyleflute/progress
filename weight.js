@@ -192,12 +192,15 @@ function renderWeight() {
         <p class="muted" style="margin:0;font-size:14px">${latest ? `Das sind etwa ${fmt(latest.avg * st.rate[st.goal] / 100, 2)} kg pro Woche. ` : ''}${st.goal === 'cut' ? 'Bewährt sind 0,5 bis 1 % pro Woche, langsamer schützt die Muskulatur besser.' : 'Für sauberen Aufbau eher langsam, etwa 0,25 % pro Woche.'}</p>`}
     </section>
     <section class="card">
-      <div class="card-title"><h2>Messungen</h2><span class="sub">${all.length}</span></div>
+      <div class="card-title"><h2>Messungen <span class="muted num" style="font-weight:500;font-size:15px">${all.length}</span></h2>
+        <label class="btn small" for="csvFile" style="cursor:pointer">${I.upload}CSV importieren</label></div>
+      <input type="file" id="csvFile" accept=".csv,text/csv,text/plain,text/comma-separated-values" hidden>
       ${all.length ? `<div class="list">${all.slice().reverse().slice(0, 14).map(p => `
         <button class="list-item" data-wd="${p.d}"><div class="t"><b class="num">${fmt(p.kg, 1)} kg</b><span>${prettyDay(p.d)}</span></div><span class="muted num" style="font-size:14px">Ø ${fmt(p.avg, 1)}</span></button>`).join('')}</div>` : '<div class="empty">Noch keine Messungen.</div>'}
     </section>`;
 
   $('#wSet').onclick = () => openSettings();
+  $('#csvFile').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openCsvImport(f); };
   $('#wSave').onclick = () => {
     const val = num($('#wIn').value);
     const d = $('#wDate').value || dayKey();
