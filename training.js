@@ -53,6 +53,7 @@ function renderTrain() {
 
   v.innerHTML = `
     <div class="head"><h1>Training</h1><div class="actions">
+      ${streakBadgeHTML()}
       <button class="icon-btn" id="exLibBtn" aria-label="Übungen verwalten">${I.list}</button>
       <button class="icon-btn" id="trSetBtn" aria-label="Einstellungen">${I.gear}</button>
     </div></div>
@@ -119,6 +120,7 @@ function renderTrain() {
   $('#trSetBtn').onclick = () => openSettings('training');
   $('#newWo').onclick = () => openWorkoutEditor(null);
   $('#planBtn').onclick = openPlanEditor;
+  if ($('#streakBadge')) $('#streakBadge').onclick = openStreakInfo;
   if ($('#todayStart')) $('#todayStart').onclick = () => startWorkout($('#todayStart').dataset.wo);
   if ($('#todayPlan')) $('#todayPlan').onclick = openPlanEditor;
   $('#emptyWo').onclick = () => startWorkout(null);
@@ -458,7 +460,7 @@ async function finishWorkout() {
   }
   const open = a.items.reduce((n, it) => n + it.sets.filter(s => !s.done).length, 0);
   if (open && !(await confirmSheet({ title: 'Training beenden?', text: `${open} Sätze sind nicht abgehakt und werden nicht gezählt.`, okLabel: 'Beenden', danger: false }))) return;
-  const prBefore = allPRs().length;
+  const streakBefore = streakInfo();
   const sess = JSON.parse(JSON.stringify(a));
   sess.end = Date.now();
   sess.items = sess.items.map(it => {
@@ -470,8 +472,7 @@ async function finishWorkout() {
   stopRest();
   save();
   hideWorkout();
-  const newPRs = allPRs().length - prBefore;
-  toast(`Training gespeichert · ${doneSets} ${doneSets === 1 ? 'Satz' : 'Sätze'}${newPRs > 0 ? ` · ${newPRs} ${newPRs === 1 ? 'neuer Rekord' : 'neue Rekorde'}` : ''}`);
+  showWorkoutSummary(sess, streakBefore);
 }
 
 /* ---------- Pausen-Timer ---------- */
@@ -604,6 +605,8 @@ function openPlanEditor() {
   el.querySelector('#planSave').onclick = () => {
     const np = {};
     for (let i = 0; i < 7; i++) { const v = el.querySelector('#plan_' + i).value; if (v) np[i] = v; }
-    S.plan = np; save(); closeSheet(el); renderTrain(); toast('Wochenplan gespeichert');
+    S.plan = np;
+    if (!S.settings.planSince) S.settings.planSince = dayKey();
+    save(); closeSheet(el); renderTrain(); toast('Wochenplan gespeichert');
   };
 }

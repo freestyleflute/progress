@@ -138,8 +138,10 @@ function chartSVG(points, days) {
   const dots = points.map(p => `<circle class="raw" cx="${x(p.d).toFixed(1)}" cy="${y(p.kg).toFixed(1)}" r="2.6"/>`).join('');
   const lbl = (d, anchor) => { const dt = parseDay(d); return `<text class="axis" x="${x(d).toFixed(1)}" y="${H - 8}" text-anchor="${anchor}">${dt.getDate()}. ${MON[dt.getMonth()]}</text>`; };
   const endP = points[points.length - 1];
+  const tg = S.settings.targetWeight;
+  const tgLine = tg && tg >= lo && tg <= hi ? `<line class="target" x1="${L}" x2="${W - R}" y1="${y(tg).toFixed(1)}" y2="${y(tg).toFixed(1)}"/><text class="axis tlabel" x="${W - R}" y="${(y(tg) - 5).toFixed(1)}" text-anchor="end">Ziel ${fmt(tg, 1)}</text>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gewichtsverlauf">
-    ${grid}
+    ${grid}${tgLine}
     <path class="area" d="${area}"/>
     ${dots}
     <path class="avg" d="${line}"/>
@@ -165,13 +167,11 @@ function renderWeight() {
     <div class="head"><h1>Gewicht</h1><div class="actions"><button class="icon-btn" id="wSet" aria-label="Einstellungen">${I.gear}</button></div></div>
     <section class="card">
       <div class="card-title"><h2>${todayVal ? 'Heute gewogen' : 'Gewicht eintragen'}</h2><span class="sub">${latest ? '7-Tage-Schnitt ' + fmt(latest.avg, 1) + ' kg' : ''}</span></div>
-      ${latest ? `<div class="big-weight"><b>${fmt(latest.kg, 1)}</b><span>kg · ${prettyDay(latest.d)}</span></div>` : ''}
-      <div class="row">
-        <input class="input" id="wIn" inputmode="decimal" placeholder="z. B. ${latest ? fmt(latest.kg, 1) : '80,0'}" value="${todayVal ? fmt(todayVal, 1) : ''}" aria-label="Gewicht in kg">
-        <input class="input" id="wDate" type="date" value="${dayKey()}" max="${dayKey()}" aria-label="Datum">
-      </div>
-      <button class="btn primary" id="wSave">Speichern</button>
+      <div id="wWheel"></div>
+      <div class="date-row"><label for="wDate">Datum</label><input class="input" id="wDate" type="date" value="${dayKey()}" max="${dayKey()}"></div>
+      <button class="btn primary" id="wSave">${todayVal ? 'Aktualisieren' : 'Speichern'}</button>
     </section>
+    ${forecastCardHTML(latest, rate)}
     ${recCardHTML(r)}
     <section class="card">
       <div class="seg" id="wRange">${RANGES.map(([k]) => `<button data-r="${k}" class="${k === weightRange ? 'on' : ''}">${k}</button>`).join('')}</div>
@@ -184,7 +184,7 @@ function renderWeight() {
       </div>
     </section>
     <section class="card">
-      <div class="card-title"><h2>Ziel</h2></div>
+      <div class="card-title"><h2>Ziel</h2><button class="btn small" id="tgtBtn">${st.targetWeight ? `Zielgewicht ${fmt(st.targetWeight, 1)} kg` : 'Zielgewicht festlegen'}</button></div>
       <div class="seg" id="wGoal">${['cut', 'maintain', 'bulk'].map(g => `<button data-g="${g}" class="${st.goal === g ? 'on' : ''}">${GOAL_LABEL[g]}</button>`).join('')}</div>
       ${st.goal === 'maintain' ? '<p class="muted" style="margin:0;font-size:14px">Ziel: Gewicht stabil halten.</p>' : `
         <div class="field"><label>Tempo (% Körpergewicht pro Woche)</label>
@@ -201,14 +201,18 @@ function renderWeight() {
 
   $('#wSet').onclick = () => openSettings();
   $('#csvFile').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openCsvImport(f); };
+  const startVal = todayVal || (latest ? latest.kg : 80);
+  const picker = weightWheels($('#wWheel'), startVal);
   $('#wSave').onclick = () => {
-    const val = num($('#wIn').value);
+    const val = picker.get();
     const d = $('#wDate').value || dayKey();
     if (!(val > 25 && val < 350)) { toast('Bitte ein gültiges Gewicht eingeben'); return; }
     S.weights[d] = Math.round(val * 10) / 10;
     save(); haptic(); renderWeight(); updateWeightDot(); toast('Gewicht gespeichert');
   };
-  $('#wDate').onchange = () => { const d = $('#wDate').value; $('#wIn').value = S.weights[d] ? fmt(S.weights[d], 1) : ''; };
+  $('#wDate').onchange = () => { const d = $('#wDate').value; if (S.weights[d]) picker.set(S.weights[d]); };
+  if ($('#tgtBtn')) $('#tgtBtn').onclick = openTargetPicker;
+  if ($('#tgtSet')) $('#tgtSet').onclick = openTargetPicker;
   $$('#wRange button').forEach(b => b.onclick = () => { weightRange = b.dataset.r; renderWeight(); });
   $$('#wGoal button').forEach(b => b.onclick = () => { st.goal = b.dataset.g; save(); renderWeight(); updateWeightDot(); });
   $$('#wRate button').forEach(b => b.onclick = () => { st.rate[st.goal] = num(b.dataset.rt); save(); renderWeight(); updateWeightDot(); });
@@ -225,4 +229,121 @@ function renderWeight() {
 function updateWeightDot() {
   const dot = document.getElementById('weightDot');
   if (dot) dot.hidden = !hasActiveRec();
+}
+
+
+/* ---------- Drehräder für Gewicht ---------- */
+const WHEEL_H = 44;
+function wheel(container, values, index, label) {
+  const el = document.createElement('div');
+  el.className = 'wheel';
+  el.setAttribute('role', 'listbox');
+  el.setAttribute('aria-label', label);
+  el.tabIndex = 0;
+  el.innerHTML = `<div class="wheel-pad"></div>${values.map((v, i) => `<div class="wheel-item" data-i="${i}">${v}</div>`).join('')}<div class="wheel-pad"></div>`;
+  container.appendChild(el);
+  let cur = index;
+  const items = $$('.wheel-item', el);
+  const mark = () => items.forEach((it, i) => { const d = Math.abs(i - cur); it.className = 'wheel-item' + (d === 0 ? ' sel' : d === 1 ? ' n1' : ''); });
+  const go = (i, smooth) => { cur = clamp(i, 0, values.length - 1); el.scrollTo({ top: cur * WHEEL_H, behavior: smooth ? 'smooth' : 'auto' }); mark(); };
+  requestAnimationFrame(() => go(index, false));
+  let t;
+  el.addEventListener('scroll', () => {
+    const i = clamp(Math.round(el.scrollTop / WHEEL_H), 0, values.length - 1);
+    if (i !== cur) { cur = i; mark(); }
+    clearTimeout(t);
+    t = setTimeout(() => { if (Math.abs(el.scrollTop - cur * WHEEL_H) > 1) go(cur, true); }, 120);
+  }, { passive: true });
+  items.forEach((it, i) => it.addEventListener('click', () => go(i, true)));
+  el.addEventListener('keydown', e => {
+    if (e.key === 'ArrowUp') { go(cur - 1, true); e.preventDefault(); }
+    if (e.key === 'ArrowDown') { go(cur + 1, true); e.preventDefault(); }
+  });
+  mark();
+  return { get: () => cur, set: (i) => go(i, false) };
+}
+
+const KG_MIN = 30, KG_MAX = 250;
+function weightWheels(container, value) {
+  container.innerHTML = '<div class="wheels"><div class="wheel-band"></div></div>';
+  const box = container.querySelector('.wheels');
+  const v = clamp(Math.round((value || 80) * 10) / 10, KG_MIN, KG_MAX + 0.9);
+  const ints = Array.from({ length: KG_MAX - KG_MIN + 1 }, (_, i) => KG_MIN + i);
+  const a = wheel(box, ints, Math.floor(v) - KG_MIN, 'Kilogramm');
+  const sep = document.createElement('span'); sep.className = 'wheel-sep'; sep.textContent = ','; box.appendChild(sep);
+  const b = wheel(box, Array.from({ length: 10 }, (_, i) => i), Math.round((v % 1) * 10) % 10, 'Nachkommastelle');
+  const unit = document.createElement('span'); unit.className = 'wheel-unit'; unit.textContent = 'kg'; box.appendChild(unit);
+  a.el = box.children[1];
+  return {
+    get: () => Math.round(((KG_MIN + a.get()) + b.get() / 10) * 10) / 10,
+    set: (w) => { const x = Math.round(w * 10) / 10; a.set(Math.floor(x) - KG_MIN); b.set(Math.round((x % 1) * 10) % 10); },
+  };
+}
+
+/* ---------- Zielgewicht & Prognose ---------- */
+function openTargetPicker() {
+  const st = S.settings;
+  const series = smooth(weightSeries());
+  const cur = series.length ? series[series.length - 1].avg : 80;
+  const el = openSheet({
+    title: 'Zielgewicht',
+    body: `<div id="tgtWheel"></div>
+      <button class="btn primary" id="tgtSave">Ziel speichern</button>
+      ${st.targetWeight ? '<button class="btn danger" id="tgtDel">Zielgewicht entfernen</button>' : ''}`,
+  });
+  const pk = weightWheels(el.querySelector('#tgtWheel'), st.targetWeight || Math.round((cur + (st.goal === 'bulk' ? 3 : -5)) * 10) / 10);
+  el.querySelector('#tgtSave').onclick = () => {
+    const t = pk.get();
+    st.targetWeight = t;
+    st.targetStart = Math.round(cur * 10) / 10;
+    st.targetSetOn = dayKey();
+    // Ziel passend zur Richtung setzen
+    if (series.length) {
+      if (t < cur - 0.3 && st.goal !== 'cut') st.goal = 'cut';
+      if (t > cur + 0.3 && st.goal !== 'bulk') st.goal = 'bulk';
+    }
+    save(); closeSheet(el); renderWeight(); updateWeightDot(); toast(`Zielgewicht ${fmt(t, 1)} kg gespeichert`);
+  };
+  if (st.targetWeight) el.querySelector('#tgtDel').onclick = () => {
+    st.targetWeight = null; st.targetStart = null; save(); closeSheet(el); renderWeight();
+  };
+}
+
+function forecastCardHTML(latest, trend) {
+  const st = S.settings;
+  if (!st.targetWeight) {
+    return latest ? `<button class="wcard" id="tgtSet"><div class="t"><b>Zielgewicht festlegen</b><span>Dann siehst du, wann du es voraussichtlich erreichst</span></div><svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>` : '';
+  }
+  if (!latest) return '';
+  const tgt = st.targetWeight;
+  const cur = latest.avg;
+  const remaining = tgt - cur;
+  const start = st.targetStart || cur;
+  const total = tgt - start;
+  const prog = total ? clamp((cur - start) / total, 0, 1) : 1;
+  const bar = `<div class="tgt-bar"><div class="bar-track"><div class="bar-fill" style="width:${prog * 100}%"></div></div>
+    <div class="tgt-ends num"><span>Start ${fmt(start, 1)}</span><span>${fmt(prog * 100, 0)} %</span><span>Ziel ${fmt(tgt, 1)}</span></div></div>`;
+  if (Math.abs(remaining) < 0.15 || (total && (cur - start) / total >= 1)) {
+    return `<section class="rec"><div class="eyebrow">Zielgewicht</div><div class="delta green">Ziel erreicht</div>
+      <p>Dein Schnitt liegt bei <b class="num">${fmt(cur, 1)} kg</b>. Leg ein neues Ziel fest oder stell auf „Halten“ um.</p>${bar}</section>`;
+  }
+  const dir = Math.sign(remaining);
+  const planRate = st.goal === 'cut' ? -cur * st.rate.cut / 100 : st.goal === 'bulk' ? cur * st.rate.bulk / 100 : 0;
+  const fits = (r) => r != null && Math.sign(r) === dir && Math.abs(r) >= 0.03;
+  const eta = (r) => { const weeks = remaining / r; return { weeks, date: addDays(dayKey(), Math.round(weeks * 7)) }; };
+  const dtxt = (k) => { const d = parseDay(k); return `${d.getDate()}. ${MON[d.getMonth()]} ${d.getFullYear()}`; };
+  const wtxt = (w) => w < 1.5 ? `${Math.max(1, Math.round(w * 7))} Tagen` : `${fmt(w, 0)} Wochen`;
+  let main, sub = '';
+  if (fits(trend)) {
+    const e = eta(trend);
+    main = `<div class="delta">in ca. ${wtxt(e.weeks)}</div><p>Bei deinem aktuellen Trend von <b class="num">${trend > 0 ? '+' : ''}${fmt(trend, 2)} kg/Woche</b> erreichst du <b class="num">${fmt(tgt, 1)} kg</b> etwa am <b>${dtxt(e.date)}</b>.</p>`;
+    if (fits(planRate)) { const p = eta(planRate); sub = `<p class="tgt-sub">Mit deinem geplanten Tempo (${planRate > 0 ? '+' : ''}${fmt(planRate, 2)} kg/Woche) wäre es etwa der ${dtxt(p.date)}.</p>`; }
+  } else if (fits(planRate)) {
+    const p = eta(planRate);
+    main = `<div class="delta">in ca. ${wtxt(p.weeks)}</div><p>Mit deinem geplanten Tempo von <b class="num">${planRate > 0 ? '+' : ''}${fmt(planRate, 2)} kg/Woche</b> erreichst du <b class="num">${fmt(tgt, 1)} kg</b> etwa am <b>${dtxt(p.date)}</b>.</p>`;
+    sub = `<p class="tgt-sub">${trend == null ? 'Sobald du ein paar Wochen gewogen hast, rechnet die Prognose mit deinem echten Trend.' : `Dein aktueller Trend (${trend > 0 ? '+' : ''}${fmt(trend, 2)} kg/Woche) geht noch nicht in Richtung Ziel.`}</p>`;
+  } else {
+    main = `<div class="delta red">Keine Prognose</div><p>${st.goal === 'maintain' ? `Dein Ziel steht auf „Halten“. Stell es auf ${dir < 0 ? '„Diät“' : '„Aufbau“'}, um ${fmt(Math.abs(remaining), 1)} kg ${dir < 0 ? 'abzunehmen' : 'zuzunehmen'}.` : `Dein Ziel und dein Zielgewicht passen nicht zusammen. Stell das Ziel auf ${dir < 0 ? '„Diät“' : '„Aufbau“'}.`}</p>`;
+  }
+  return `<section class="rec"><div class="eyebrow">Prognose · noch ${fmt(Math.abs(remaining), 1)} kg</div>${main}${sub}${bar}</section>`;
 }

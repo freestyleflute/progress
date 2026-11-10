@@ -137,6 +137,7 @@ function importBackup(file, sheetEl) {
   let start = 'food';
   try { start = sessionStorage.getItem(TAB_KEY) || 'food'; } catch (e) {}
   if (S.active) start = 'train';
+  if (hasPlan() && !S.settings.planSince) { S.settings.planSince = dayKey(); save(); }
   setTab(start);
   updateWeightDot();
   // Tageswechsel, wenn die App lange offen bleibt
