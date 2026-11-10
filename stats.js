@@ -1,6 +1,29 @@
 /* Statistik & persönliche Rekorde pro Übung. */
 'use strict';
 
+/* ---------- Körpergewicht ----------
+   mode 'bw': Last = Körpergewicht + Zusatzgewicht, mode 'assist': Last = Körpergewicht – Unterstützung */
+function exMode(exId, item) {
+  if (item && item.mode !== undefined) return item.mode || null;
+  const ex = S.exercises[exId];
+  return (ex && ex.mode) || null;
+}
+function bwAt(ts) {
+  const key = dayKey(new Date(ts));
+  const ks = Object.keys(S.weights).sort();
+  let v = null;
+  for (const k of ks) { if (k <= key) v = S.weights[k]; else { if (v == null) v = S.weights[k]; break; } }
+  return v;
+}
+function currentBW() { return bwAt(Date.now()); }
+function effKg(mode, added, bw) {
+  const a = num(added) || 0;
+  if (!mode) return a;
+  if (bw == null) return mode === 'assist' ? 0 : a;
+  return mode === 'assist' ? Math.max(0, bw - a) : bw + a;
+}
+function kgShort(v) { return `${fmt(v, v % 1 ? 1 : 0)} kg`; }
+
 /* Geschätztes 1RM nach Epley */
 function e1rm(kg, reps) {
   kg = num(kg); reps = num(reps);
@@ -16,7 +39,9 @@ function exerciseHistory(exId, excludeId) {
     .map(s => {
       const it = s.items.find(x => x.exId === exId);
       if (!it) return null;
-      const sets = it.sets.filter(x => x.done).map(x => ({ kg: num(x.kg) || 0, reps: num(x.reps) || 0 }));
+      const mode = exMode(exId, it);
+      const bw = it.bw != null ? it.bw : bwAt(s.start);
+      const sets = it.sets.filter(x => x.done).map(x => ({ kg: effKg(mode, x.kg, bw), add: num(x.kg) || 0, mode, reps: num(x.reps) || 0 }));
       if (!sets.length) return null;
       return {
         sid: s.id,
@@ -252,8 +277,18 @@ function progressionFor(exId, excludeId) {
   const last = h[h.length - 1];
   const ex = S.exercises[exId] || {};
   const name = ex.name || exName(exId);
-  const assisted = /unterstütz|assist/i.test(name);
-  const kgs = last.sets.map(x => x.kg).filter(x => x > 0);
+  const mode = exMode(exId);
+  const assisted = mode === 'assist' || (!mode && /unterstütz|assist/i.test(name));
+  if (mode === 'bw') {
+    const add = Math.max(...last.sets.map(x => x.add || 0));
+    const hitBw = last.sets.some(x => x.reps >= PROG_REPS);
+    const mr = Math.max(...last.sets.map(x => x.reps));
+    const cur = add ? `BW+${kgShort(add)}` : 'BW';
+    return hitBw
+      ? { type: 'up', kg: add + 2.5, inc: 2.5, text: `${PROG_REPS}+ geschafft! Heute BW+${kgShort(add + 2.5)} Zusatzgewicht (+2,5 kg)` }
+      : { type: 'reps', kg: add, text: `Bleib bei ${cur} und schaff mehr Wiederholungen als letztes Mal (${mr}). Ab ${PROG_REPS} kommt Zusatzgewicht dazu.` };
+  }
+  const kgs = last.sets.map(x => (x.mode ? x.add : x.kg)).filter(x => x > 0);
   const hit = last.sets.some(x => x.reps >= PROG_REPS);
   const maxReps = Math.max(...last.sets.map(x => x.reps));
   if (!kgs.length && !assisted) {
@@ -266,11 +301,12 @@ function progressionFor(exId, excludeId) {
   const inc = lower && base >= 40 ? 5 : 2.5;
   const kgTxt = v => `${fmt(v, v % 1 ? 1 : 0)} kg`;
   if (!hit) {
-    return { type: 'reps', kg: base, text: `Bleib bei ${kgTxt(base)} und schaff mehr Wiederholungen als letztes Mal (${maxReps}). Ab ${PROG_REPS} geht es hoch.` };
+    const lbl = assisted && mode === 'assist' ? `BW−${kgTxt(base)}` : kgTxt(base);
+    return { type: 'reps', kg: base, text: `Bleib bei ${lbl} und schaff mehr Wiederholungen als letztes Mal (${maxReps}). Ab ${PROG_REPS} geht es ${assisted ? 'mit weniger Unterstützung weiter' : 'hoch'}.` };
   }
   if (assisted) {
     const kg = Math.max(0, base - inc);
-    return { type: 'up', kg, inc: -inc, text: `${PROG_REPS}+ geschafft! Weniger Unterstützung: ${kgTxt(kg)} (–${fmt(inc, inc % 1 ? 1 : 0)} kg)` };
+    return { type: 'up', kg, inc: -inc, text: `${PROG_REPS}+ geschafft! Weniger Unterstützung: ${mode === 'assist' ? 'BW−' : ''}${kgTxt(kg)} (–${fmt(inc, inc % 1 ? 1 : 0)} kg)` };
   }
   const kg = base + inc;
   return { type: 'up', kg, inc, text: `${PROG_REPS}+ geschafft! Heute ${kgTxt(kg)} (+${fmt(inc, inc % 1 ? 1 : 0)} kg)` };

@@ -28,14 +28,14 @@ const DEFAULT_EXERCISES = [
   ['Enges Kabelrudern', ['lats', 'upper_back'], ['biceps', 'rear_delt', 'forearms']],
   ['High-Row-Maschine', ['lats', 'upper_back'], ['biceps', 'rear_delt']],
   ['Reverse Flys (Maschine)', ['rear_delt'], ['upper_back']],
-  ['Weite Klimmzüge', ['lats'], ['upper_back', 'biceps', 'forearms']],
-  ['Weite Klimmzüge mit Unterstützung', ['lats'], ['upper_back', 'biceps', 'forearms']],
+  ['Weite Klimmzüge', ['lats'], ['upper_back', 'biceps', 'forearms'], 'bw'],
+  ['Weite Klimmzüge mit Unterstützung', ['lats'], ['upper_back', 'biceps', 'forearms'], 'assist'],
   ['Enger Latzug', ['lats'], ['biceps', 'upper_back', 'forearms']],
   ['Lat-Überzüge (Kabel)', ['lats'], ['triceps']],
   ['Preacher-Curl-Maschine', ['biceps'], ['forearms']],
   ['Hammer Curls (Seil)', ['biceps', 'forearms'], []],
   ['Schrägbankdrücken (Smith Machine)', ['chest'], ['front_delt', 'triceps']],
-  ['Dips', ['chest', 'triceps'], ['front_delt']],
+  ['Dips', ['chest', 'triceps'], ['front_delt'], 'bw'],
   ['Butterfly (Maschine)', ['chest'], ['front_delt']],
   ['Schulterpresse (Maschine)', ['front_delt'], ['side_delt', 'triceps']],
   ['Seitheben (Maschine, sitzend)', ['side_delt'], []],
@@ -48,7 +48,7 @@ const DEFAULT_EXERCISES = [
   ['Adduktorenmaschine', ['adductors'], []],
   ['Wadenheben (sitzend)', ['calves'], []],
   ['Kabel-Crunches (kniend)', ['abs'], []],
-  ['Leg Raises (liegend)', ['abs'], []],
+  ['Leg Raises (liegend)', ['abs'], [], 'bw'],
 ];
 
 const MEALS = [
@@ -66,9 +66,9 @@ function uid() {
 
 function defaultState() {
   const exercises = {};
-  DEFAULT_EXERCISES.forEach(([name, primary, secondary], i) => {
+  DEFAULT_EXERCISES.forEach(([name, primary, secondary, mode], i) => {
     const id = 'ex' + String(i + 1).padStart(2, '0');
-    exercises[id] = { id, name, primary, secondary };
+    exercises[id] = { id, name, primary, secondary, mode: mode || null };
   });
   return {
     version: 1,
@@ -116,6 +116,11 @@ function migrate(data) {
   out.settings.zones = Object.assign(defaultState().settings.zones, (data.settings || {}).zones || {});
   out.settings.rate = Object.assign(defaultState().settings.rate, (data.settings || {}).rate || {});
   if (!out.settings.createdAt) out.settings.createdAt = Date.now();
+  // Körpergewichts-Modus für die Standardübungen nachtragen
+  DEFAULT_EXERCISES.forEach(([name, , , mode], i) => {
+    const ex = out.exercises['ex' + String(i + 1).padStart(2, '0')];
+    if (ex && ex.mode === undefined) ex.mode = ex.name === name ? (mode || null) : null;
+  });
   return out;
 }
 

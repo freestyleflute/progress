@@ -178,6 +178,9 @@ function openExerciseEditor(id, onDone) {
     title: id ? 'Übung bearbeiten' : 'Neue Übung',
     body: `
       <div class="field"><label for="exName">Name</label><input class="input" id="exName" value="${esc(ex.name)}" placeholder="z. B. Bankdrücken"></div>
+      <div class="field"><label>Art der Übung</label>
+        <div class="seg" id="exMode"><button data-md="">Normal</button><button data-md="bw">Körpergewicht</button><button data-md="assist">Unterstützt</button></div>
+        <span class="muted" id="exModeTxt" style="font-size:13px"></span></div>
       <div class="eyebrow">Muskelgruppen</div>
       <p class="muted" style="margin:-6px 0 0;font-size:13px">Einmal tippen = primär (zählt 1 Satz), zweimal = sekundär (zählt ${fmt(S.settings.secondaryFactor, 2)} Satz), dreimal = entfernen.</p>
       <div class="chips" id="exChips"></div>
@@ -198,6 +201,13 @@ function openExerciseEditor(id, onDone) {
     });
   };
   draw();
+  const MODE_TXT = { '': 'Das eingetragene Gewicht zählt.', bw: 'Leer = nur Körpergewicht (BW). Eingetragene kg sind Zusatzgewicht, gerechnet wird BW + Zusatzgewicht.', assist: 'Eingetragene kg sind die Unterstützung der Maschine, gerechnet wird BW – Unterstützung.' };
+  const markMode = () => {
+    $$('#exMode button', el).forEach(b => b.classList.toggle('on', b.dataset.md === (ex.mode || '')));
+    el.querySelector('#exModeTxt').textContent = MODE_TXT[ex.mode || ''];
+  };
+  $$('#exMode button', el).forEach(b => b.onclick = () => { ex.mode = b.dataset.md || null; markMode(); });
+  markMode();
   el.querySelector('#exSave').onclick = () => {
     ex.name = el.querySelector('#exName').value.trim();
     if (!ex.name) { toast('Bitte einen Namen eingeben'); return; }
@@ -273,10 +283,18 @@ function lastPerformance(exId, excludeId) {
   const s = S.sessions.filter(x => x.id !== excludeId).sort((a, b) => b.start - a.start)
     .find(x => x.items.some(it => it.exId === exId && it.sets.some(st => st.done)));
   if (!s) return null;
-  return s.items.find(it => it.exId === exId).sets.filter(st => st.done);
+  const it = s.items.find(x => x.exId === exId);
+  const mode = exMode(exId, it);
+  return it.sets.filter(st => st.done).map(st => ({ ...st, mode }));
 }
 
-function setText(st) { return `${fmt(num(st.kg), num(st.kg) % 1 ? 1 : 0)} kg × ${st.reps}`; }
+/* Satz als Text. Bei Körpergewichtsübungen: BW, BW+10 kg, BW−20 kg */
+function setText(st) {
+  const raw = st.add != null ? st.add : num(st.kg) || 0;
+  if (st.mode === 'bw') return `${raw ? 'BW+' + kgShort(raw) : 'BW'} × ${st.reps}`;
+  if (st.mode === 'assist') return `${raw ? 'BW−' + kgShort(raw) : 'BW'} × ${st.reps}`;
+  return `${fmt(num(st.kg), num(st.kg) % 1 ? 1 : 0)} kg × ${st.reps}`;
+}
 
 function openSession(id) {
   const s = S.sessions.find(x => x.id === id);
@@ -289,7 +307,7 @@ function openSession(id) {
         const done = it.sets.filter(x => x.done);
         if (!done.length) return '';
         return `<div class="card" style="padding:14px;gap:6px"><b>${esc((S.exercises[it.exId] || it).name)}</b>
-          <span class="muted num" style="font-size:14px">${done.map(setText).join(' · ')}</span></div>`;
+          <span class="muted num" style="font-size:14px">${done.map(x => setText({ ...x, mode: exMode(it.exId, it) })).join(' · ')}</span></div>`;
       }).join('')}
       <button class="btn danger" id="sesDel">${I.trash}Training aus Verlauf löschen</button>`,
   });
@@ -365,17 +383,24 @@ function drawWorkout() {
         const best = exerciseBests(it.exId, a.id);
         const bw = best && best.hist.every(r => r.maxKg === 0);
         const prog = progressionFor(it.exId, a.id);
-        const kgHint = (pv) => prog && prog.kg != null ? String(prog.kg) : pv ? String(pv.kg) : 'kg';
-        const isPR = st => st.done && best && (bw ? num(st.reps) > best.maxReps.maxReps : (e1rm(st.kg, st.reps) > best.e1rm.e1rm + 1e-9 || num(st.kg) > best.maxKg.maxKg));
+        const mode = exMode(it.exId);
+        const curBW = currentBW();
+        const kgHint = (pv) => {
+          const v = prog && prog.kg != null ? prog.kg : pv ? num(pv.kg) : null;
+          if (v == null) return mode ? 'BW' : 'kg';
+          return mode && !v ? 'BW' : String(v);
+        };
+        const eff = st => effKg(mode, st.kg, curBW);
+        const isPR = st => st.done && best && (bw ? num(st.reps) > best.maxReps.maxReps : (e1rm(eff(st), st.reps) > best.e1rm.e1rm + 1e-9 || eff(st) > best.maxKg.maxKg));
         return `<div class="ex">
           <div class="ex-head">
-            <button class="t" data-statex="${it.exId}" style="text-align:left"><b>${esc(ex.name)}</b><span>${esc(musclesText(ex))} · Statistik ›</span></button>
+            <button class="t" data-statex="${it.exId}" style="text-align:left"><b>${esc(ex.name)}</b><span>${esc(musclesText(ex))}${mode ? ` · ${mode === 'assist' ? 'Unterstützt' : 'Körpergewicht'}${curBW ? ' (' + kgShort(curBW) + ')' : ', bitte Gewicht eintragen'}` : ''} · Statistik ›</span></button>
             <button class="icon-btn" style="width:34px;height:34px" data-rmex="${i}" aria-label="Übung entfernen">${I.trash}</button>
           </div>
           <div class="ex-last">${last ? 'Letztes Mal: ' + last.map(setText).join(' · ') : 'Noch keine Vorwerte'}</div>
           ${progressionHTML(prog)}
           <div class="sets">
-            <span class="hd">Satz</span><span class="hd">Vorher</span><span class="hd">kg</span><span class="hd">Wdh</span><span class="hd">✓</span>
+            <span class="hd">Satz</span><span class="hd">Vorher</span><span class="hd">${mode === 'bw' ? '+kg' : mode === 'assist' ? '−kg' : 'kg'}</span><span class="hd">Wdh</span><span class="hd">✓</span>
             ${it.sets.map((st, j) => {
               const pv = last && last[j];
               return `<span class="no">${isPR(st) ? `<span class="trophy" title="Neuer Rekord">${I.trophy}</span>` : j + 1}</span>
@@ -415,7 +440,8 @@ function drawWorkout() {
     const st = a.items[i].sets[j];
     if (!st.done) {
       const kgIn = $('#kg_' + i + '_' + j), rpIn = $('#rp_' + i + '_' + j);
-      if (st.kg === '' && kgIn.placeholder && kgIn.placeholder !== 'kg') st.kg = kgIn.placeholder.replace(',', '.');
+      if (st.kg === '' && kgIn.placeholder === 'BW') st.kg = '0';
+      else if (st.kg === '' && kgIn.placeholder && kgIn.placeholder !== 'kg') st.kg = kgIn.placeholder.replace(',', '.');
       if (st.reps === '' && rpIn.placeholder && rpIn.placeholder !== 'Wdh') st.reps = rpIn.placeholder;
       if (st.reps === '' || !(num(st.reps) > 0)) { toast('Bitte Wiederholungen eintragen'); rpIn.focus(); return; }
       if (st.kg === '') st.kg = '0';
@@ -424,15 +450,18 @@ function drawWorkout() {
       startRest();
       const best = exerciseBests(a.items[i].exId, a.id);
       if (best) {
+        const mode = exMode(a.items[i].exId);
+        const cbw = currentBW();
+        const ef = x => effKg(mode, x.kg, cbw);
         const bw = best.hist.every(r => r.maxKg === 0);
         const prevInSession = a.items[i].sets.filter((x, k) => k !== j && x.done);
-        const sessBest = Math.max(0, ...prevInSession.map(x => bw ? num(x.reps) : e1rm(x.kg, x.reps)));
-        const val = bw ? num(st.reps) : e1rm(st.kg, st.reps);
+        const sessBest = Math.max(0, ...prevInSession.map(x => bw ? num(x.reps) : e1rm(ef(x), x.reps)));
+        const val = bw ? num(st.reps) : e1rm(ef(st), st.reps);
         const rec = bw ? best.maxReps.maxReps : best.e1rm.e1rm;
         if (val > rec + 1e-9 && val > sessBest) {
-          toast(bw ? `Neuer Rekord: ${st.reps} Wiederholungen` : `Neuer Rekord: ${setText(st)} (1RM ≈ ${fmt(val, 1)} kg)`);
-        } else if (!bw && num(st.kg) > best.maxKg.maxKg && !prevInSession.some(x => num(x.kg) >= num(st.kg))) {
-          toast(`Neuer Rekord: ${fmt(num(st.kg), num(st.kg) % 1 ? 1 : 0)} kg schwerstes Gewicht`);
+          toast(bw ? `Neuer Rekord: ${st.reps} Wiederholungen` : `Neuer Rekord: ${setText({ ...st, mode })} (1RM ≈ ${fmt(val, 1)} kg)`);
+        } else if (!bw && ef(st) > best.maxKg.maxKg && !prevInSession.some(x => ef(x) >= ef(st))) {
+          toast(mode ? `Neuer Rekord: ${setText({ ...st, mode }).split(' × ')[0]} (${kgShort(ef(st))} gesamt)` : `Neuer Rekord: ${kgShort(ef(st))} schwerstes Gewicht`);
         }
       }
     } else st.done = false;
@@ -470,7 +499,8 @@ async function finishWorkout() {
   sess.end = Date.now();
   sess.items = sess.items.map(it => {
     const ex = S.exercises[it.exId];
-    return { exId: it.exId, name: ex ? ex.name : it.name, primary: ex ? ex.primary : it.primary, secondary: ex ? ex.secondary : it.secondary, sets: it.sets.filter(s => s.done) };
+    const mode = ex ? ex.mode || null : it.mode || null;
+    return { exId: it.exId, name: ex ? ex.name : it.name, primary: ex ? ex.primary : it.primary, secondary: ex ? ex.secondary : it.secondary, mode, bw: mode ? currentBW() : null, sets: it.sets.filter(s => s.done) };
   }).filter(it => it.sets.length);
   S.sessions.push(sess);
   S.active = null;

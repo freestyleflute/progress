@@ -77,7 +77,8 @@ function openStreakInfo() {
 function showWorkoutSummary(sess, streakBefore) {
   const sets = sess.items.reduce((a, it) => a + it.sets.length, 0);
   const reps = sess.items.reduce((a, it) => a + it.sets.reduce((b, st) => b + (num(st.reps) || 0), 0), 0);
-  const volume = sess.items.reduce((a, it) => a + it.sets.reduce((b, st) => b + (num(st.kg) || 0) * (num(st.reps) || 0), 0), 0);
+  const sessVol = (s) => s.items.reduce((a, it) => { const bw = it.bw != null ? it.bw : bwAt(s.start); return a + it.sets.reduce((b, st) => b + effKg(exMode(it.exId, it), st.kg, bw) * (num(st.reps) || 0), 0); }, 0);
+  const volume = sessVol(sess);
   const dur = (sess.end || Date.now()) - sess.start;
   const prs = groupPRs(allPRs().filter(p => p.row.sid === sess.id));
   const after = streakInfo();
@@ -85,7 +86,7 @@ function showWorkoutSummary(sess, streakBefore) {
   const muscles = [...new Set(sess.items.flatMap(it => it.primary || []))].map(m => MUSCLE_NAME[m]);
   // Vergleich mit dem letzten Mal desselben Trainings
   const prev = S.sessions.filter(s => s.id !== sess.id && s.name === sess.name && s.start < sess.start).sort((a, b) => b.start - a.start)[0];
-  const prevVol = prev ? prev.items.reduce((a, it) => a + it.sets.reduce((b, st) => b + (num(st.kg) || 0) * (num(st.reps) || 0), 0), 0) : null;
+  const prevVol = prev ? sessVol(prev) : null;
   const volDiff = prevVol ? (volume - prevVol) / prevVol * 100 : null;
 
   const ov = document.createElement('div');
