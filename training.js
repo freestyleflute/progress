@@ -89,6 +89,7 @@ function renderTrain() {
         return `<div class="d ${trainedDays.has(k) ? 'done' : ''} ${k === todayK ? 'today' : ''}">${WD[d.getDay()]}<i>${d.getDate()}</i></div>`;
       }).join('')}</div>
     </section>
+    ${prCardHTML()}
     <section class="card">
       <div class="card-title"><h2>Meine Trainings</h2><button class="btn small primary" id="newWo">${I.plus}Neu</button></div>
       ${workouts.length ? workouts.map(w => `
@@ -119,6 +120,8 @@ function renderTrain() {
   $$('[data-edit-wo]').forEach(b => b.onclick = () => openWorkoutEditor(b.dataset.editWo));
   $$('[data-start-wo]').forEach(b => b.onclick = () => startWorkout(b.dataset.startWo));
   $$('[data-sess]').forEach(b => b.onclick = () => openSession(b.dataset.sess));
+  $$('#view [data-stat]').forEach(b => b.onclick = () => openExerciseStats(b.dataset.stat));
+  $('#allStatsBtn').onclick = openAllStats;
   $$('.bodymap .m').forEach(p => p.addEventListener('click', () => {
     const m = p.dataset.m;
     toast(`${MUSCLE_NAME[m]}: ${fmt(vol[m], vol[m] % 1 ? 1 : 0)} Sätze diese Woche`);
@@ -150,7 +153,7 @@ function openExerciseLibrary(onPick) {
       </button>`).join('') || '<div class="empty">Keine Übung gefunden.</div>';
     $$('[data-ex]', el).forEach(b => b.onclick = () => {
       if (onPick) { onPick(b.dataset.ex); closeSheet(el); }
-      else openExerciseEditor(b.dataset.ex, draw);
+      else openExerciseStats(b.dataset.ex);
     });
   };
   el.querySelector('#exSearch').oninput = draw;
@@ -347,9 +350,12 @@ function drawWorkout() {
       ${a.items.map((it, i) => {
         const ex = S.exercises[it.exId] || it;
         const last = lastPerformance(it.exId, a.id);
+        const best = exerciseBests(it.exId, a.id);
+        const bw = best && best.hist.every(r => r.maxKg === 0);
+        const isPR = st => st.done && best && (bw ? num(st.reps) > best.maxReps.maxReps : (e1rm(st.kg, st.reps) > best.e1rm.e1rm + 1e-9 || num(st.kg) > best.maxKg.maxKg));
         return `<div class="ex">
           <div class="ex-head">
-            <div class="t"><b>${esc(ex.name)}</b><span>${esc(musclesText(ex))}</span></div>
+            <button class="t" data-statex="${it.exId}" style="text-align:left"><b>${esc(ex.name)}</b><span>${esc(musclesText(ex))} · Statistik ›</span></button>
             <button class="icon-btn" style="width:34px;height:34px" data-rmex="${i}" aria-label="Übung entfernen">${I.trash}</button>
           </div>
           <div class="ex-last">${last ? 'Letztes Mal: ' + last.map(setText).join(' · ') : 'Noch keine Vorwerte'}</div>
@@ -357,7 +363,7 @@ function drawWorkout() {
             <span class="hd">Satz</span><span class="hd">Vorher</span><span class="hd">kg</span><span class="hd">Wdh</span><span class="hd">✓</span>
             ${it.sets.map((st, j) => {
               const pv = last && last[j];
-              return `<span class="no">${j + 1}</span>
+              return `<span class="no">${isPR(st) ? `<span class="trophy" title="Neuer Rekord">${I.trophy}</span>` : j + 1}</span>
                 <span class="prev">${pv ? setText(pv) : '–'}</span>
                 <input class="input ${st.done ? 'dn' : ''}" inputmode="decimal" id="kg_${i}_${j}" data-kg="${i}:${j}" value="${esc(String(st.kg).replace('.', ','))}" placeholder="${pv ? esc(String(pv.kg)) : 'kg'}" aria-label="Gewicht Satz ${j + 1}">
                 <input class="input ${st.done ? 'dn' : ''}" inputmode="numeric" id="rp_${i}_${j}" data-rp="${i}:${j}" value="${esc(st.reps)}" placeholder="${pv ? esc(String(pv.reps)) : 'Wdh'}" aria-label="Wiederholungen Satz ${j + 1}">
@@ -385,6 +391,7 @@ function drawWorkout() {
       S.active = null; stopRest(); save(); hideWorkout();
     }
   };
+  $$('[data-statex]', box).forEach(b => b.onclick = () => openExerciseStats(b.dataset.statex));
   $('#woAddEx').onclick = () => openExerciseLibrary((exId) => { a.items.push(newItem(exId, 3)); save(); drawWorkout(); });
   $$('[data-kg]', box).forEach(inp => inp.oninput = () => { const [i, j] = inp.dataset.kg.split(':'); a.items[i].sets[j].kg = inp.value.replace(',', '.'); save(); });
   $$('[data-rp]', box).forEach(inp => inp.oninput = () => { const [i, j] = inp.dataset.rp.split(':'); a.items[i].sets[j].reps = inp.value.replace(/\D/g, ''); save(); });
@@ -400,6 +407,19 @@ function drawWorkout() {
       st.done = true;
       haptic();
       startRest();
+      const best = exerciseBests(a.items[i].exId, a.id);
+      if (best) {
+        const bw = best.hist.every(r => r.maxKg === 0);
+        const prevInSession = a.items[i].sets.filter((x, k) => k !== j && x.done);
+        const sessBest = Math.max(0, ...prevInSession.map(x => bw ? num(x.reps) : e1rm(x.kg, x.reps)));
+        const val = bw ? num(st.reps) : e1rm(st.kg, st.reps);
+        const rec = bw ? best.maxReps.maxReps : best.e1rm.e1rm;
+        if (val > rec + 1e-9 && val > sessBest) {
+          toast(bw ? `Neuer Rekord: ${st.reps} Wiederholungen` : `Neuer Rekord: ${setText(st)} (1RM ≈ ${fmt(val, 1)} kg)`);
+        } else if (!bw && num(st.kg) > best.maxKg.maxKg && !prevInSession.some(x => num(x.kg) >= num(st.kg))) {
+          toast(`Neuer Rekord: ${fmt(num(st.kg), num(st.kg) % 1 ? 1 : 0)} kg schwerstes Gewicht`);
+        }
+      }
     } else st.done = false;
     save(); drawWorkout();
   });
@@ -430,6 +450,7 @@ async function finishWorkout() {
   }
   const open = a.items.reduce((n, it) => n + it.sets.filter(s => !s.done).length, 0);
   if (open && !(await confirmSheet({ title: 'Training beenden?', text: `${open} Sätze sind nicht abgehakt und werden nicht gezählt.`, okLabel: 'Beenden', danger: false }))) return;
+  const prBefore = allPRs().length;
   const sess = JSON.parse(JSON.stringify(a));
   sess.end = Date.now();
   sess.items = sess.items.map(it => {
@@ -441,7 +462,8 @@ async function finishWorkout() {
   stopRest();
   save();
   hideWorkout();
-  toast(`Training gespeichert · ${doneSets} Sätze`);
+  const newPRs = allPRs().length - prBefore;
+  toast(`Training gespeichert · ${doneSets} ${doneSets === 1 ? 'Satz' : 'Sätze'}${newPRs > 0 ? ` · ${newPRs} ${newPRs === 1 ? 'neuer Rekord' : 'neue Rekorde'}` : ''}`);
 }
 
 /* ---------- Pausen-Timer ---------- */

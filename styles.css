@@ -324,3 +324,13 @@ svg { display: block; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (max-width: 360px) { .ring { width: 140px; height: 140px; } .ring .center b { font-size: 30px; } .vol-row { grid-template-columns: 92px 1fr 40px; } }
 .panel .pb > * { flex-shrink: 0; }
+/* Rekorde & Statistik */
+.trophy { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: var(--green-soft); flex: none; }
+.trophy svg { width: 17px; height: 17px; fill: none; stroke: var(--green); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.list-item .trophy { width: 36px; height: 36px; border-radius: 12px; }
+.list-item .trophy svg { width: 20px; height: 20px; }
+.stat .when { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.chart .pt { fill: var(--green); stroke: var(--bg); stroke-width: 2; }
+.chart .best { fill: var(--red); stroke: var(--bg); stroke-width: 2.5; }
+.ex-head button.t { min-width: 0; }
+.btn.small svg, .btn svg { flex: none; }
