@@ -459,3 +459,17 @@ svg { display: block; }
 .add-btn.added { background: var(--card2); color: var(--green); }
 .add-btn.added svg { stroke-width: 3; fill: none; stroke: currentColor; }
 #addSeg button { font-size: 13px; }
+/* Lebensmittelsuche */
+.search-row { display: flex; gap: 8px; }
+.search-row .input { flex: 1; min-width: 0; }
+.search-row .btn { width: 48px; height: 48px; padding: 0; border-radius: 14px; flex: none; }
+.eyebrow.sect { margin: 6px 0 2px; }
+.food-row { align-items: center; }
+.food-img { width: 46px; height: 46px; border-radius: 12px; object-fit: cover; background: #fff; flex: none; }
+.food-img.ph { display: grid; place-items: center; background: var(--card2); }
+.food-img.ph svg { width: 22px; height: 22px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.food-row .t span { line-height: 1.35; }
+.db-btn { margin-top: 6px; background: var(--green-soft); color: var(--green); height: auto; min-height: 50px; padding: 12px 16px; text-align: left; justify-content: flex-start; }
+.src { margin: 4px 0 0; font-size: 12px; text-align: center; }
+.spin { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--green); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }

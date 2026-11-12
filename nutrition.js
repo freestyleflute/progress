@@ -125,7 +125,7 @@ function openAddFood(meal) {
     body: `<div class="seg" id="addSeg">
         <button data-mode="recent">Verlauf</button>
         <button data-mode="scan">Scannen</button>
-        <button data-mode="mine">Produkte</button>
+        <button data-mode="mine">Suche</button>
         <button data-mode="meals">Mahlzeiten</button>
       </div>
       <div id="addBody"></div>
@@ -207,7 +207,11 @@ async function fetchOFF(code) {
   }
   const j = await r.json();
   if (j.status !== 1 || !j.product) return null;
-  const p = j.product;
+  return offToProduct(j.product, code);
+}
+
+/* Open-Food-Facts-Produkt in unser Format umwandeln */
+function offToProduct(p, code) {
   const n = p.nutriments || {};
   const val = (k) => { const x = num(n[k]); return isNaN(x) ? null : x; };
   let kcal = val('energy-kcal_100g');
@@ -217,8 +221,10 @@ async function fetchOFF(code) {
   const caf = val('caffeine_100g'); // Open Food Facts gibt Koffein in g pro 100 g an
   const round = (x, d = 1) => x == null ? '' : Math.round(x * 10 ** d) / 10 ** d;
   return {
-    barcode: code,
+    barcode: code || p.code || '',
     name: (p.product_name_de || p.product_name || '').trim(),
+    quantity: (p.quantity || '').trim(),
+    image: p.image_small_url || p.image_front_small_url || '',
     brand: (p.brands || '').split(',')[0].trim(),
     serving: num(p.serving_quantity) || null,
     per100: {
@@ -229,26 +235,117 @@ async function fetchOFF(code) {
   };
 }
 
+/* Suche: eigene Produkte sofort, Open Food Facts auf Knopfdruck (Limit: 10 Suchen pro Minute) */
+const offCache = new Map();
+let offCalls = [];
+function offRateOk() {
+  const now = Date.now();
+  offCalls = offCalls.filter(t => now - t < 60000);
+  return offCalls.length < 8;
+}
+const OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,serving_quantity,nutriments,image_small_url,image_front_small_url';
+async function searchOFF(q, page = 1) {
+  const key = q.toLowerCase() + '|' + page;
+  if (offCache.has(key)) return offCache.get(key);
+  if (!offRateOk()) { const e = new Error('rate'); e.code = 'rate'; throw e; }
+  offCalls.push(Date.now());
+  const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=24&page=${page}&sort_by=unique_scans_n&fields=${OFF_FIELDS}`;
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (r.status === 429 || r.status === 503) { const e = new Error('rate'); e.code = 'rate'; throw e; }
+  if (!r.ok) throw new Error('http ' + r.status);
+  const j = await r.json();
+  const list = (j.products || [])
+    .map(p => offToProduct(p, p.code))
+    .filter(p => p.name && p.per100.kcal !== '' && p.per100.kcal != null);
+  const res = { list, count: j.count || list.length, more: (j.page_count || 0) > 0 && page * 24 < (j.count || 0) };
+  offCache.set(key, res);
+  return res;
+}
+
+function productRowHTML(p, attr) {
+  return `<button class="list-item food-row" ${attr}>
+    ${p.image ? `<img class="food-img" src="${esc(p.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="food-img ph">${I.bowl}</span>`}
+    <div class="t"><b>${esc(p.name)}</b><span>${[p.brand, p.quantity].filter(Boolean).map(esc).join(' · ')}${p.brand || p.quantity ? '<br>' : ''}${fmt(p.per100.kcal)} kcal · ${fmt(p.per100.protein, 1)} g Protein / 100 g</span></div>
+    <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+  </button>`;
+}
+
 function renderMine(body, meal, sheetEl) {
   body.innerHTML = `
-    <input class="input" id="pSearch" type="search" placeholder="Produkt suchen" autocomplete="off">
-    <div class="list" id="pList"></div>`;
-  const list = body.querySelector('#pList');
-  const draw = () => {
-    const q = body.querySelector('#pSearch').value.trim().toLowerCase();
+    <form class="search-row" id="pForm">
+      <input class="input" id="pSearch" type="search" enterkeyhint="search" placeholder="z. B. Laugenstange" autocomplete="off">
+      <button class="btn small primary" type="submit">${I.search}</button>
+    </form>
+    <div id="pMine"></div>
+    <div id="pDb"></div>`;
+  const input = body.querySelector('#pSearch');
+  const mineEl = body.querySelector('#pMine');
+  const dbEl = body.querySelector('#pDb');
+  let dbState = { q: '', page: 1, list: [], count: 0, more: false };
+
+  const drawMine = () => {
+    const q = input.value.trim().toLowerCase();
     const items = Object.values(S.products)
       .filter(p => !q || (p.name + ' ' + (p.brand || '')).toLowerCase().includes(q))
-      .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
-    list.innerHTML = items.length ? items.map(p => `
-      <button class="list-item" data-pid="${p.id}">
-        <div class="t"><b>${esc(p.name)}</b><span>${p.brand ? esc(p.brand) + ' · ' : ''}${fmt(p.per100.kcal)} kcal · ${fmt(p.per100.protein, 1)} g Protein / 100 g</span></div>
-        <svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
-      </button>`).join('')
-      : `<div class="empty">${q ? 'Kein Produkt gefunden.' : 'Noch keine Produkte gespeichert. Scanne dein erstes Produkt oder lege es manuell an.'}</div>`;
-    $$('[data-pid]', list).forEach(b => b.onclick = () => openProductForm({ meal, product: S.products[b.dataset.pid], parent: sheetEl }));
+      .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0))
+      .slice(0, q ? 50 : 30);
+    mineEl.innerHTML = items.length
+      ? `<div class="eyebrow sect">Meine Produkte</div><div class="list">${items.map(p => productRowHTML(p, `data-pid="${p.id}"`)).join('')}</div>`
+      : (q ? '' : '<div class="empty">Noch keine eigenen Produkte. Suche oben in der Datenbank oder scanne ein Produkt.</div>');
+    $$('[data-pid]', mineEl).forEach(b => b.onclick = () => openProductForm({ meal, product: S.products[b.dataset.pid], parent: sheetEl }));
+    // Hinweis auf Datenbanksuche, solange sie für diesen Begriff noch nicht lief
+    if (q && dbState.q !== q) {
+      dbEl.innerHTML = `<button class="btn db-btn" id="dbGo">${I.search}„${esc(input.value.trim())}“ in der Lebensmittel-Datenbank suchen</button>`;
+      dbEl.querySelector('#dbGo').onclick = () => runDb();
+    } else if (!q) dbEl.innerHTML = '';
   };
-  body.querySelector('#pSearch').oninput = draw;
-  draw();
+
+  const drawDb = () => {
+    const rows = dbState.list.map((p, i) => {
+      const local = p.barcode && findProductByBarcode(p.barcode);
+      return productRowHTML(local ? { ...p, ...local, image: local.image || p.image, quantity: p.quantity } : p, `data-dbi="${i}"`);
+    }).join('');
+    dbEl.innerHTML = `<div class="eyebrow sect">Datenbank · ${fmt(dbState.count)} Treffer</div>
+      ${rows ? `<div class="list">${rows}</div>` : '<div class="empty">Nichts gefunden. Probier einen anderen Begriff oder lege das Produkt manuell an.</div>'}
+      ${dbState.more ? '<button class="btn" id="dbMore">Mehr laden</button>' : ''}
+      <p class="muted src">Daten von Open Food Facts. Werte vor dem Hinzufügen kurz mit der Packung vergleichen.</p>`;
+    $$('[data-dbi]', dbEl).forEach(b => b.onclick = () => {
+      const p = dbState.list[+b.dataset.dbi];
+      const local = p.barcode && findProductByBarcode(p.barcode);
+      openProductForm({ meal, product: local || p, parent: sheetEl, isNew: !local });
+    });
+    if (dbEl.querySelector('#dbMore')) dbEl.querySelector('#dbMore').onclick = () => runDb(true);
+  };
+
+  const runDb = async (more = false) => {
+    const q = input.value.trim();
+    if (q.length < 2) { toast('Bitte mindestens 2 Buchstaben eingeben'); return; }
+    input.blur();
+    const page = more ? dbState.page + 1 : 1;
+    if (!more) dbState = { q: q.toLowerCase(), page: 1, list: [], count: 0, more: false };
+    const btn = dbEl.querySelector('#dbMore') || dbEl.querySelector('#dbGo');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Suche läuft …'; }
+    else dbEl.innerHTML = '<div class="empty"><span class="spin"></span>Suche läuft …</div>';
+    try {
+      const res = await searchOFF(q, page);
+      dbState.page = page;
+      dbState.list = more ? dbState.list.concat(res.list) : res.list;
+      dbState.count = res.count; dbState.more = res.more;
+      drawDb();
+    } catch (e) {
+      const msg = e.code === 'rate'
+        ? 'Die Datenbank erlaubt nur ein paar Suchen pro Minute. Bitte kurz warten und dann nochmal tippen.'
+        : navigator.onLine === false ? 'Keine Internetverbindung. Deine eigenen Produkte findest du trotzdem oben.' : 'Die Datenbank antwortet gerade nicht. Versuch es gleich nochmal.';
+      dbEl.innerHTML = `<div class="empty">${msg}</div><button class="btn" id="dbGo">${I.search}Nochmal suchen</button>`;
+      dbEl.querySelector('#dbGo').onclick = () => runDb(more);
+      if (more) dbState.q = q.toLowerCase();
+    }
+  };
+
+  input.oninput = () => { if (dbState.q && dbState.q !== input.value.trim().toLowerCase()) dbState.q = ''; drawMine(); };
+  body.querySelector('#pForm').onsubmit = (e) => { e.preventDefault(); runDb(); };
+  drawMine();
+  setTimeout(() => input.focus(), 350);
 }
 
 /* Produktformular: Werte pro 100 g + Menge */
@@ -293,6 +390,7 @@ function openProductForm({ meal, product, parent, isNew, grams }) {
       name: el.querySelector('#pfName').value.trim(),
       brand: el.querySelector('#pfBrand').value.trim(),
       barcode: p.barcode || '',
+      image: p.image || '',
       serving: num(el.querySelector('#pfServ').value) || null,
       per100,
       lastUsed: p.lastUsed || 0,
