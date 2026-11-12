@@ -101,11 +101,16 @@ let S = load();
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return defaultState();
+    if (!raw) return freshState();
     return migrate(JSON.parse(raw));
   } catch (e) {
-    return defaultState();
+    return freshState();
   }
+}
+function freshState() {
+  const st = defaultState();
+  addExerciseLibrary(st);
+  return st;
 }
 
 function migrate(data) {
@@ -121,6 +126,8 @@ function migrate(data) {
     const ex = out.exercises['ex' + String(i + 1).padStart(2, '0')];
     if (ex && ex.mode === undefined) ex.mode = ex.name === name ? (mode || null) : null;
   });
+  // Übungsbibliothek einmalig ergänzen, ohne vorhandene Übungen anzufassen
+  addExerciseLibrary(out);
   return out;
 }
 

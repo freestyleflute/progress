@@ -1,8 +1,8 @@
 /* Service Worker: macht die App offline nutzbar. Bei Updates CACHE-Version erhöhen. */
-const CACHE = 'progress-v9';
+const CACHE = 'progress-v10';
 const APP = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'store.js', 'ui.js', 'bodymap.js', 'scanner.js', 'nutrition.js', 'training.js', 'weight.js', 'stats.js', 'csvimport.js', 'streak.js', 'main.js',
+  'exlib.js', 'store.js', 'ui.js', 'bodymap.js', 'scanner.js', 'nutrition.js', 'training.js', 'weight.js', 'stats.js', 'csvimport.js', 'streak.js', 'main.js',
   'apple-touch-icon.png', 'icon-192.png', 'icon-512.png',
 ];
 const LIB = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.0.2/dist/iife/reader/index.js';

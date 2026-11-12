@@ -85,7 +85,7 @@ function openSettings(section) {
   el.querySelector('#impFile').onchange = (e) => importBackup(e.target.files[0], el);
   el.querySelector('#resetBtn').onclick = async () => {
     if (await confirmSheet({ title: 'Alle Daten löschen?', text: 'Ernährung, Trainings, Übungen und Gewicht werden unwiderruflich gelöscht. Exportiere vorher ein Backup.', okLabel: 'Alles löschen' })) {
-      S = defaultState(); saveNow(); closeAllSheets(); setTab('food'); toast('Alle Daten gelöscht');
+      S = freshState(); saveNow(); closeAllSheets(); setTab('food'); toast('Alle Daten gelöscht');
     }
   };
   if (section === 'training') setTimeout(() => el.querySelector('#secTrain').scrollIntoView({ block: 'start' }), 350);

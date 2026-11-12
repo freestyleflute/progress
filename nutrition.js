@@ -75,32 +75,34 @@ function renderFood() {
         <div class="side"><b>${fmt(g.kcal)}</b><span>Ziel</span></div>
       </div>
       <div class="macros">
-        ${macro('protein', 'var(--green)')}
         ${macro('carbs', 'var(--carb)')}
+        ${macro('protein', 'var(--green)')}
         ${macro('fat', 'var(--fat)')}
       </div>
     </section>
-    <section class="card">
-      <div class="card-title"><h2>Salz, Ballaststoffe & Koffein</h2></div>
-      <div class="micro">${mini('salt')}${mini('fiber')}${mini('caffeine')}</div>
+    <section class="card micro-card ${microOpen() ? 'open' : ''}">
+      <button class="collapse-head" id="microToggle" aria-expanded="${microOpen()}">
+        <div class="t"><h2>Salz, Ballaststoffe & Koffein</h2>
+          <span class="num">${fmt(t.salt, 1)} g Salz · ${fmt(t.fiber)} g Ballaststoffe · ${fmt(t.caffeine)} mg Koffein</span></div>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      ${microOpen() ? `<div class="micro">${mini('salt')}${mini('fiber')}${mini('caffeine')}</div>` : ''}
     </section>
     ${MEALS.map(([m, label]) => {
       const list = d[m];
       const mt = sumEntries(list);
       return `<section class="card meal">
         <div class="meal-head">
-          <div class="meal-icon">${MEAL_ICON[m]}</div>
-          <div class="t"><b>${label}</b><span>${list.length ? `${fmt(mt.kcal)} kcal · P ${fmt(mt.protein)} · K ${fmt(mt.carbs)} · F ${fmt(mt.fat)}` : 'Noch nichts eingetragen'}</span></div>
+          <button class="meal-open" data-mealopen="${m}" aria-label="${label} anzeigen">
+            <span class="meal-icon">${MEAL_ICON[m]}</span>
+            <span class="t"><b>${label}${list.length ? `<svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>` : ''}</b>
+              ${list.length ? `<span class="meal-kcal num">${fmt(mt.kcal)} kcal · ${list.length} ${list.length === 1 ? 'Eintrag' : 'Einträge'}</span>
+              <span class="meal-macros num"><i class="mk c"></i>K ${fmt(mt.carbs)} g<i class="mk p"></i>P ${fmt(mt.protein)} g<i class="mk f"></i>F ${fmt(mt.fat)} g</span>`
+              : '<span class="meal-kcal">Noch nichts eingetragen</span>'}
+            </span>
+          </button>
           <button class="add-btn" data-add="${m}" aria-label="${label} hinzufügen">${I.plus}</button>
         </div>
-        ${list.length ? `<div class="entries">${list.map(e => {
-          const n = entryNutrients(e);
-          return `<button class="entry" data-entry="${m}:${e.id}">
-            <div class="t"><b>${esc(e.name)}</b><span>${fmt(e.grams)} g${e.brand ? ' · ' + esc(e.brand) : ''}</span></div>
-            <span class="k">${fmt(n.kcal)} kcal</span>
-          </button>`;
-        }).join('')}</div>
-        <button class="btn small save-meal" data-savemeal="${m}">${I.bookmark}Als Mahlzeit speichern</button>` : ''}
       </section>`;
     }).join('')}
   `;
@@ -109,11 +111,53 @@ function renderFood() {
   $('#dNext').onclick = () => { foodDay = addDays(foodDay, 1); renderFood(); };
   $('#goalsBtn').onclick = () => openSettings();
   $$('[data-add]').forEach(b => b.onclick = () => openAddFood(b.dataset.add));
-  $$('[data-savemeal]').forEach(b => b.onclick = () => openSaveMeal(b.dataset.savemeal));
-  $$('[data-entry]').forEach(b => b.onclick = () => {
-    const [m, id] = b.dataset.entry.split(':');
-    openEntry(m, id);
+  $$('[data-mealopen]').forEach(b => b.onclick = () => openMealSheet(b.dataset.mealopen));
+  $('#microToggle').onclick = () => { S.settings.microOpen = !microOpen(); save(); renderFood(); };
+  if (mealSheet && document.body.contains(mealSheet.el)) drawMealSheet();
+}
+
+function microOpen() { return !!S.settings.microOpen; }
+
+/* ---------- Mahlzeit öffnen: Liste aller Einträge ---------- */
+let mealSheet = null;
+function openMealSheet(m) {
+  const label = MEALS.find(x => x[0] === m)[1];
+  const el = openSheet({
+    title: label,
+    body: '<div id="msBody" style="display:flex;flex-direction:column;gap:14px"></div>',
+    onClose: () => { mealSheet = null; },
   });
+  mealSheet = { el, m };
+  drawMealSheet();
+}
+function drawMealSheet() {
+  const { el, m } = mealSheet;
+  const label = MEALS.find(x => x[0] === m)[1];
+  const list = dayEntries(foodDay)[m];
+  const mt = sumEntries(list);
+  const body = el.querySelector('#msBody');
+  body.innerHTML = `
+    <p class="muted" style="margin:0;font-size:14px">${prettyDay(foodDay)}</p>
+    <div class="card" style="padding:14px">
+      <div class="summary" style="grid-template-columns:repeat(4,1fr);gap:6px">
+        <div class="side"><b>${fmt(mt.kcal)}</b><span>kcal</span></div>
+        <div class="side"><b>${fmt(mt.carbs)}</b><span>Kohlenh.</span></div>
+        <div class="side"><b>${fmt(mt.protein)}</b><span>Protein</span></div>
+        <div class="side"><b>${fmt(mt.fat)}</b><span>Fett</span></div>
+      </div>
+    </div>
+    ${list.length ? `<div class="entries">${list.map(e => {
+      const n = entryNutrients(e);
+      return `<button class="entry" data-entry="${e.id}">
+        <div class="t"><b>${esc(e.name)}</b><span class="num">${fmt(e.grams)} g${e.brand ? ' · ' + esc(e.brand) : ''} · K ${fmt(n.carbs)} · P ${fmt(n.protein)} · F ${fmt(n.fat)}</span></div>
+        <span class="k">${fmt(n.kcal)} kcal</span>
+      </button>`;
+    }).join('')}</div>` : '<div class="empty">Noch nichts eingetragen.</div>'}
+    <button class="btn primary" id="msAdd">${I.plus}Zu ${esc(label)} hinzufügen</button>
+    ${list.length ? `<button class="btn" id="msSave">${I.bookmark}Als Mahlzeit speichern</button>` : ''}`;
+  $$('[data-entry]', body).forEach(b => b.onclick = () => openEntry(m, b.dataset.entry));
+  body.querySelector('#msAdd').onclick = () => openAddFood(m);
+  if (body.querySelector('#msSave')) body.querySelector('#msSave').onclick = () => openSaveMeal(m);
 }
 
 /* ---------- Lebensmittel hinzufügen ---------- */
