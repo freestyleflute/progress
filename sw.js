@@ -1,5 +1,5 @@
 /* Service Worker: macht die App offline nutzbar. Bei Updates CACHE-Version erhöhen. */
-const CACHE = 'progress-v10';
+const CACHE = 'progress-v11';
 const APP = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'exlib.js', 'store.js', 'ui.js', 'bodymap.js', 'scanner.js', 'nutrition.js', 'training.js', 'weight.js', 'stats.js', 'csvimport.js', 'streak.js', 'main.js',

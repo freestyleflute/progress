@@ -8,6 +8,18 @@ const NUT_LABEL = {
   salt: ['Salz', 'g'], fiber: ['Ballaststoffe', 'g'], caffeine: ['Koffein', 'mg'],
 };
 
+/* ---------- Einheiten ---------- */
+const UNITS = ['Stück', 'Scheibe', 'Portion', 'Riegel', 'Becher', 'Glas', 'Packung', 'Esslöffel', 'Teelöffel'];
+const UNIT_PL = { Scheibe: 'Scheiben', Portion: 'Portionen', Packung: 'Packungen', Glas: 'Gläser' };
+function unitLabel(u, n) { return n > 1 ? (UNIT_PL[u] || u) : u; }
+function fmtNum(v) { v = Math.round((num(v) || 0) * 100) / 100; return fmt(v, v % 1 ? (Math.round(v * 10) === v * 10 ? 1 : 2) : 0); }
+function eUnitG(e) { return e.unitG || ((S.products[e.pid] || {}).serving) || 0; }
+/* Mengentext eines Eintrags: "2 Stück (170 g)" oder "170 g" */
+function amountText(e) {
+  if (e.pc && e.unitG) return `${fmtNum(e.pc)} ${unitLabel(e.unit || 'Stück', e.pc)} (${fmtNum(e.grams)} g)`;
+  return `${fmtNum(e.grams)} g`;
+}
+
 function dayEntries(key) {
   const d = S.diary[key];
   if (!d) return { breakfast: [], lunch: [], dinner: [], snack: [] };
@@ -149,7 +161,7 @@ function drawMealSheet() {
     ${list.length ? `<div class="entries">${list.map(e => {
       const n = entryNutrients(e);
       return `<button class="entry" data-entry="${e.id}">
-        <div class="t"><b>${esc(e.name)}</b><span class="num">${fmt(e.grams)} g${e.brand ? ' · ' + esc(e.brand) : ''} · K ${fmt(n.carbs)} · P ${fmt(n.protein)} · F ${fmt(n.fat)}</span></div>
+        <div class="t"><b>${esc(e.name)}</b><span class="num">${amountText(e)}${e.brand ? ' · ' + esc(e.brand) : ''} · K ${fmt(n.carbs)} · P ${fmt(n.protein)} · F ${fmt(n.fat)}</span></div>
         <span class="k">${fmt(n.kcal)} kcal</span>
       </button>`;
     }).join('')}</div>` : '<div class="empty">Noch nichts eingetragen.</div>'}
@@ -393,7 +405,7 @@ function renderMine(body, meal, sheetEl) {
 }
 
 /* Produktformular: Werte pro 100 g + Menge */
-function openProductForm({ meal, product, parent, isNew, grams }) {
+function openProductForm({ meal, product, parent, isNew, grams, pc }) {
   const p = product ? JSON.parse(JSON.stringify(product)) : { name: '', brand: '', barcode: '', per100: {} };
   const exists = p.id && S.products[p.id];
   const mealName = MEALS.find(x => x[0] === meal)[1];
@@ -406,9 +418,10 @@ function openProductForm({ meal, product, parent, isNew, grams }) {
   const details = `
       <div class="eyebrow">Produktdaten</div>
       <div class="field"><label for="pfName">Name</label><input class="input" id="pfName" value="${esc(p.name)}" placeholder="z. B. Skyr Natur"></div>
+      <div class="field"><label for="pfBrand">Marke</label><input class="input" id="pfBrand" value="${esc(p.brand || '')}" placeholder="optional"></div>
       <div class="grid2">
-        <div class="field"><label for="pfBrand">Marke</label><input class="input" id="pfBrand" value="${esc(p.brand || '')}" placeholder="optional"></div>
-        <div class="field"><label for="pfServ">Portion (g)</label><input class="input" id="pfServ" inputmode="decimal" value="${p.serving ? fmt(p.serving) : ''}" placeholder="optional"></div>
+        <div class="field"><label for="pfUnit">Einheit</label><select class="input" id="pfUnit">${UNITS.map(u => `<option ${u === (p.unit || 'Stück') ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="pfServ">Gramm pro Einheit</label><input class="input" id="pfServ" inputmode="decimal" value="${p.serving ? fmt(p.serving, p.serving % 1 ? 1 : 0) : ''}" placeholder="optional, z. B. 85"></div>
       </div>
       ${p.barcode ? `<p class="muted" style="margin:0;font-size:13px">Barcode ${esc(p.barcode)}</p>` : ''}
       <div class="eyebrow">Nährwerte pro 100 g</div>
@@ -416,7 +429,10 @@ function openProductForm({ meal, product, parent, isNew, grams }) {
   const amount = `
       <div class="eyebrow">Menge</div>
       <div class="chips" id="pfQuick"></div>
-      <div class="field"><label for="pfGrams">Gramm</label><input class="input" id="pfGrams" inputmode="decimal" value="${grams ? fmt(grams, grams % 1 ? 1 : 0) : p.serving ? fmt(p.serving) : 100}"></div>
+      <div class="grid2 amount">
+        <div class="field" id="pfPcWrap"><label for="pfPc" id="pfPcLbl">Anzahl</label><input class="input" id="pfPc" inputmode="decimal" value=""></div>
+        <div class="field"><label for="pfGrams">Gramm</label><input class="input" id="pfGrams" inputmode="decimal" value="${grams ? fmt(grams, grams % 1 ? 1 : 0) : p.serving ? fmt(p.serving, p.serving % 1 ? 1 : 0) : 100}"></div>
+      </div>
       <div class="card" style="background:var(--card);padding:14px" id="pfPreview"></div>
       <button class="btn primary" id="pfAdd">${I.plus}Zu ${esc(mealName)} hinzufügen</button>`;
   const el = openSheet({
@@ -436,18 +452,35 @@ function openProductForm({ meal, product, parent, isNew, grams }) {
       barcode: p.barcode || '',
       image: p.image || '',
       serving: num(el.querySelector('#pfServ').value) || null,
+      unit: el.querySelector('#pfUnit').value,
       per100,
       lastUsed: p.lastUsed || 0,
     };
   };
-  const quick = () => {
-    const serv = num(el.querySelector('#pfServ').value);
-    const opts = [];
-    if (serv > 0) opts.push([serv, `1 Portion (${fmt(serv)} g)`]);
-    [50, 100, 150, 200, 250].forEach(g => opts.push([g, `${g} g`]));
-    el.querySelector('#pfQuick').innerHTML = opts.map(([g, l]) => `<button class="chip" data-g="${g}">${l}</button>`).join('');
-    $$('[data-g]', el).forEach(b => b.onclick = () => { el.querySelector('#pfGrams').value = fmt(num(b.dataset.g)); preview(); });
+  // Menge in Stück oder Gramm, beide Felder sind verknüpft
+  let pcMode = false;
+  const gIn = el.querySelector('#pfGrams'), pcIn = el.querySelector('#pfPc');
+  const serv = () => num(el.querySelector('#pfServ').value);
+  const unitNow = () => el.querySelector('#pfUnit').value;
+  const syncPc = () => {
+    const sv = serv();
+    el.querySelector('#pfPcWrap').hidden = !(sv > 0);
+    el.querySelector('#pfPcLbl').textContent = `Anzahl (${unitNow()})`;
+    if (sv > 0) { const g = num(gIn.value) || 0; pcIn.value = fmtNum(g / sv); }
   };
+  const quick = () => {
+    const sv = serv();
+    const opts = [];
+    if (sv > 0) [0.5, 1, 2, 3].forEach(n => opts.push([sv * n, `${fmtNum(n)} ${unitLabel(unitNow(), n)}`, true]));
+    [50, 100, 150, 200].forEach(g => opts.push([g, `${g} g`, false]));
+    el.querySelector('#pfQuick').innerHTML = opts.map(([g, l, isPc]) => `<button class="chip" data-g="${g}" data-pc="${isPc ? 1 : ''}">${l}</button>`).join('');
+    $$('[data-g]', el).forEach(b => b.onclick = () => { gIn.value = fmtNum(num(b.dataset.g)); pcMode = !!b.dataset.pc; syncPc(); preview(); });
+  };
+  pcIn.addEventListener('input', () => { const n = num(pcIn.value), sv = serv(); if (n >= 0 && sv > 0) { gIn.value = fmtNum(n * sv); pcMode = true; preview(); } });
+  gIn.addEventListener('input', () => { pcMode = false; const sv = serv(); if (sv > 0) pcIn.value = fmtNum((num(gIn.value) || 0) / sv); });
+  el.querySelector('#pfUnit').onchange = () => { quick(); syncPc(); };
+  if (grams && p.serving) pcMode = pc != null ? !!pc : false;
+  else if (p.serving) pcMode = true;
   const preview = () => {
     const prod = read();
     const g = num(el.querySelector('#pfGrams').value) || 0;
@@ -455,13 +488,13 @@ function openProductForm({ meal, product, parent, isNew, grams }) {
     el.querySelector('#pfPreview').innerHTML = `
       <div class="summary" style="grid-template-columns:repeat(4,1fr);gap:6px">
         <div class="side"><b>${fmt(n.kcal)}</b><span>kcal</span></div>
-        <div class="side"><b>${fmt(n.protein)}</b><span>Protein</span></div>
         <div class="side"><b>${fmt(n.carbs)}</b><span>Kohlenh.</span></div>
+        <div class="side"><b>${fmt(n.protein)}</b><span>Protein</span></div>
         <div class="side"><b>${fmt(n.fat)}</b><span>Fett</span></div>
       </div>`;
   };
-  quick(); preview();
-  el.querySelector('#pfServ').oninput = () => { quick(); preview(); };
+  quick(); syncPc(); preview();
+  el.querySelector('#pfServ').oninput = () => { quick(); syncPc(); preview(); };
   $$('.input', el).forEach(i => i.addEventListener('input', preview));
 
   const saveProduct = () => {
@@ -477,7 +510,9 @@ function openProductForm({ meal, product, parent, isNew, grams }) {
     const prod = saveProduct();
     if (!prod) return;
     const day = S.diary[foodDay] || (S.diary[foodDay] = {});
-    (day[meal] || (day[meal] = [])).push({ id: uid(), pid: prod.id, name: prod.name, brand: prod.brand, grams, per100: { ...prod.per100 } });
+    const entry = { id: uid(), pid: prod.id, name: prod.name, brand: prod.brand, grams, per100: { ...prod.per100 } };
+    if (pcMode && prod.serving > 0) { entry.pc = Math.round(grams / prod.serving * 100) / 100; entry.unit = prod.unit || 'Stück'; entry.unitG = prod.serving; }
+    (day[meal] || (day[meal] = [])).push(entry);
     save();
     haptic();
     closeSheet(el);
@@ -511,7 +546,10 @@ function openEntry(meal, id) {
   const el = openSheet({
     title: e.name,
     body: `
-      <div class="field"><label for="enGrams">Menge (g)</label><input class="input" id="enGrams" inputmode="decimal" value="${fmt(e.grams)}"></div>
+      <div class="grid2 amount">
+        ${eUnitG(e) ? `<div class="field"><label for="enPc">Anzahl (${esc(e.unit || 'Stück')})</label><input class="input" id="enPc" inputmode="decimal" value="${fmtNum(e.grams / eUnitG(e))}"></div>` : ''}
+        <div class="field" ${eUnitG(e) ? '' : 'style="grid-column:1/-1"'}><label for="enGrams">Gramm</label><input class="input" id="enGrams" inputmode="decimal" value="${fmtNum(e.grams)}"></div>
+      </div>
       <div class="field"><label for="enMeal">Mahlzeit</label><select class="input" id="enMeal">${MEALS.map(([m, l]) => `<option value="${m}" ${m === meal ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="card" style="padding:14px" id="enPrev"></div>
       <button class="btn primary" id="enSave">Speichern</button>
@@ -521,11 +559,13 @@ function openEntry(meal, id) {
     const g = num(el.querySelector('#enGrams').value) || 0;
     const n = entryNutrients({ grams: g, per100: e.per100 });
     el.querySelector('#enPrev').innerHTML = `<div class="grid3" style="grid-template-columns:repeat(4,1fr)">
-      ${[['kcal', 'kcal', 0], ['protein', 'Protein', 0], ['carbs', 'Kohlenh.', 0], ['fat', 'Fett', 0], ['salt', 'Salz g', 1], ['fiber', 'Ballastst.', 0], ['caffeine', 'Koffein mg', 0]]
+      ${[['kcal', 'kcal', 0], ['carbs', 'Kohlenh.', 0], ['protein', 'Protein', 0], ['fat', 'Fett', 0], ['salt', 'Salz g', 1], ['fiber', 'Ballastst.', 0], ['caffeine', 'Koffein mg', 0]]
         .map(([k, l, d]) => `<div class="side" style="text-align:center"><b class="num" style="display:block;font-size:17px">${fmt(n[k], d)}</b><span class="muted" style="font-size:12px">${l}</span></div>`).join('')}</div>`;
   };
   prev();
-  el.querySelector('#enGrams').oninput = prev;
+  let ePc = !!e.pc;
+  el.querySelector('#enGrams').oninput = () => { ePc = false; const u = eUnitG(e); if (u && el.querySelector('#enPc')) el.querySelector('#enPc').value = fmtNum((num(el.querySelector('#enGrams').value) || 0) / u); prev(); };
+  if (el.querySelector('#enPc')) el.querySelector('#enPc').oninput = () => { const n = num(el.querySelector('#enPc').value); if (n >= 0) { el.querySelector('#enGrams').value = fmtNum(n * eUnitG(e)); ePc = true; prev(); } };
   el.querySelector('#enSave').onclick = () => {
     const g = num(el.querySelector('#enGrams').value);
     if (!(g > 0)) { toast('Bitte eine Menge eingeben'); return; }
@@ -533,6 +573,8 @@ function openEntry(meal, id) {
     const day = S.diary[foodDay];
     day[meal] = day[meal].filter(x => x.id !== id);
     e.grams = g;
+    const u = eUnitG(e);
+    if (ePc && u) { e.pc = Math.round(g / u * 100) / 100; e.unitG = u; e.unit = e.unit || (S.products[e.pid] || {}).unit || 'Stück'; } else { delete e.pc; }
     (day[target] || (day[target] = [])).push(e);
     save(); closeSheet(el); renderFood();
   };
@@ -559,7 +601,7 @@ function openSaveMeal(mealKey) {
     body: `
       <div class="field"><label for="smName">Name</label><input class="input" id="smName" placeholder="z. B. Protein-Frühstück" value=""></div>
       <p class="muted" style="margin:0;font-size:14px">${list.length} Lebensmittel aus ${esc(label)} · ${fmt(t.kcal)} kcal · ${fmt(t.protein)} g Protein</p>
-      <div class="list">${list.map(e => `<div class="list-item"><div class="t"><b>${esc(e.name)}</b><span>${fmt(e.grams)} g</span></div><span class="muted num">${fmt(entryNutrients(e).kcal)} kcal</span></div>`).join('')}</div>
+      <div class="list">${list.map(e => `<div class="list-item"><div class="t"><b>${esc(e.name)}</b><span>${amountText(e)}</span></div><span class="muted num">${fmt(entryNutrients(e).kcal)} kcal</span></div>`).join('')}</div>
       <button class="btn primary" id="smSave">${I.bookmark}Speichern</button>`,
   });
   setTimeout(() => el.querySelector('#smName').focus(), 350);
@@ -569,7 +611,7 @@ function openSaveMeal(mealKey) {
     const id = uid();
     S.meals[id] = {
       id, name, created: Date.now(), lastUsed: Date.now(),
-      items: list.map(e => ({ pid: e.pid, name: e.name, brand: e.brand || '', grams: e.grams, per100: { ...e.per100 } })),
+      items: list.map(e => ({ pid: e.pid, name: e.name, brand: e.brand || '', grams: e.grams, per100: { ...e.per100 }, ...(e.pc ? { pc: e.pc, unit: e.unit, unitG: e.unitG } : {}) })),
     };
     save(); closeSheet(el); toast(`„${name}“ gespeichert`);
   };
@@ -579,7 +621,11 @@ function addSavedMeal(id, mealKey, factor = 1) {
   const sm = S.meals[id];
   const day = S.diary[foodDay] || (S.diary[foodDay] = {});
   const arr = day[mealKey] || (day[mealKey] = []);
-  sm.items.forEach(it => arr.push({ id: uid(), pid: it.pid, name: it.name, brand: it.brand, grams: Math.round(it.grams * factor * 10) / 10, per100: { ...it.per100 } }));
+  sm.items.forEach(it => {
+    const e = { id: uid(), pid: it.pid, name: it.name, brand: it.brand, grams: Math.round(it.grams * factor * 10) / 10, per100: { ...it.per100 } };
+    if (it.pc) { e.pc = Math.round(it.pc * factor * 100) / 100; e.unit = it.unit; e.unitG = it.unitG; }
+    arr.push(e);
+  });
   sm.lastUsed = Date.now();
   save(); haptic();
 }
@@ -621,9 +667,9 @@ function openSavedMeal(id, mealKey, parentSheet, parentBody) {
   const draw = () => {
     const t = savedMealTotals(sm, factor);
     el.querySelector('#smTot').innerHTML = `<div class="summary" style="grid-template-columns:repeat(4,1fr);gap:6px">
-      <div class="side"><b>${fmt(t.kcal)}</b><span>kcal</span></div><div class="side"><b>${fmt(t.protein)}</b><span>Protein</span></div>
-      <div class="side"><b>${fmt(t.carbs)}</b><span>Kohlenh.</span></div><div class="side"><b>${fmt(t.fat)}</b><span>Fett</span></div></div>`;
-    el.querySelector('#smItems').innerHTML = sm.items.map((it, i) => `<div class="list-item"><div class="t"><b>${esc(it.name)}</b><span class="num">${fmt(it.grams * factor, (it.grams * factor) % 1 ? 1 : 0)} g</span></div>
+      <div class="side"><b>${fmt(t.kcal)}</b><span>kcal</span></div><div class="side"><b>${fmt(t.carbs)}</b><span>Kohlenh.</span></div>
+      <div class="side"><b>${fmt(t.protein)}</b><span>Protein</span></div><div class="side"><b>${fmt(t.fat)}</b><span>Fett</span></div></div>`;
+    el.querySelector('#smItems').innerHTML = sm.items.map((it, i) => `<div class="list-item"><div class="t"><b>${esc(it.name)}</b><span class="num">${amountText({ ...it, grams: it.grams * factor, pc: it.pc ? it.pc * factor : 0 })}</span></div>
       <button class="icon-btn" style="width:32px;height:32px;color:var(--red)" data-rmit="${i}" aria-label="Aus Mahlzeit entfernen">${I.close}</button></div>`).join('');
     $$('[data-rmit]', el).forEach(b => b.onclick = () => {
       if (sm.items.length <= 1) { toast('Eine Mahlzeit braucht mindestens ein Lebensmittel'); return; }
@@ -689,7 +735,7 @@ function renderRecent(body, meal, sheetEl) {
         const n = entryNutrients(x.e);
         const id = idx++;
         return `<div class="list-item">
-          <button class="t" data-ropen="${x.day}|${x.meal}|${x.e.id}"><b>${esc(x.e.name)}</b><span class="num">${fmt(x.e.grams)} g · ${fmt(n.kcal)} kcal · ${fmt(n.protein)} g Protein · ${mealLbl[x.meal]}</span></button>
+          <button class="t" data-ropen="${x.day}|${x.meal}|${x.e.id}"><b>${esc(x.e.name)}</b><span class="num">${amountText(x.e)} · ${fmt(n.kcal)} kcal · ${fmt(n.protein)} g Protein · ${mealLbl[x.meal]}</span></button>
           <button class="add-btn" data-radd="${x.day}|${x.meal}|${x.e.id}" aria-label="${esc(x.e.name)} erneut hinzufügen">${I.plus}</button>
         </div>`;
       }).join('');
@@ -700,7 +746,9 @@ function renderRecent(body, meal, sheetEl) {
       const e = find(b.dataset.radd);
       if (!e) return;
       const day = S.diary[foodDay] || (S.diary[foodDay] = {});
-      (day[meal] || (day[meal] = [])).push({ id: uid(), pid: e.pid, name: e.name, brand: e.brand || '', grams: e.grams, per100: { ...e.per100 } });
+      const ne = { id: uid(), pid: e.pid, name: e.name, brand: e.brand || '', grams: e.grams, per100: { ...e.per100 } };
+      if (e.pc) { ne.pc = e.pc; ne.unit = e.unit; ne.unitG = e.unitG; }
+      (day[meal] || (day[meal] = [])).push(ne);
       if (e.pid && S.products[e.pid]) S.products[e.pid].lastUsed = Date.now();
       save(); haptic();
       b.classList.add('added');
@@ -712,9 +760,33 @@ function renderRecent(body, meal, sheetEl) {
       const e = find(b.dataset.ropen);
       if (!e) return;
       const prod = (e.pid && S.products[e.pid]) || { name: e.name, brand: e.brand || '', barcode: '', per100: { ...e.per100 } };
-      openProductForm({ meal, product: { ...prod, serving: prod.serving || null }, parent: sheetEl, grams: e.grams });
+      openProductForm({ meal, product: { ...prod, serving: prod.serving || e.unitG || null, unit: prod.unit || e.unit }, parent: sheetEl, grams: e.grams, pc: !!e.pc });
     });
   };
   body.querySelector('#rSearch').oninput = draw;
   draw();
 }
+
+
+/* ---------- Wischen zwischen Tagen in der Ernährung ---------- */
+(function swipeDays() {
+  const view = document.getElementById('view');
+  let x0 = null, y0 = 0, t0 = 0;
+  view.addEventListener('touchstart', (e) => {
+    if (currentTab !== 'food' || e.touches.length !== 1) { x0 = null; return; }
+    if (e.target.closest('input, textarea, select, .wheel, .chart')) { x0 = null; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now();
+  }, { passive: true });
+  view.addEventListener('touchend', (e) => {
+    if (x0 == null) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6 || Date.now() - t0 > 700) return;
+    const dir = dx < 0 ? 1 : -1; // nach links wischen = nächster Tag
+    foodDay = addDays(foodDay, dir);
+    renderFood();
+    view.classList.remove('slide-l', 'slide-r');
+    void view.offsetWidth;
+    view.classList.add(dir > 0 ? 'slide-l' : 'slide-r');
+  }, { passive: true });
+})();

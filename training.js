@@ -14,7 +14,7 @@ function weeklyVolume(ref = new Date()) {
     if (t < start || t >= end) return;
     s.items.forEach(it => {
       const ex = S.exercises[it.exId] || it;
-      const done = it.sets.filter(st => st.done).length;
+      const done = it.sets.filter(st => st.done && st.type !== 'w').length;
       if (!done) return;
       (ex.primary || []).forEach(m => { vol[m] += done; });
       (ex.secondary || []).forEach(m => { vol[m] += done * f; });
@@ -131,10 +131,8 @@ function renderTrain() {
   $$('[data-sess]').forEach(b => b.onclick = () => openSession(b.dataset.sess));
   $$('#view [data-stat]').forEach(b => b.onclick = () => openExerciseStats(b.dataset.stat));
   $('#allStatsBtn').onclick = openAllStats;
-  $$('.bodymap .m').forEach(p => p.addEventListener('click', () => {
-    const m = p.dataset.m;
-    toast(`${MUSCLE_NAME[m]}: ${fmt(vol[m], vol[m] % 1 ? 1 : 0)} Sätze diese Woche`);
-  }));
+  $$('.bodymap .m').forEach(p => p.addEventListener('click', () => openMuscleDetail(p.dataset.m)));
+  $$('#view .vol-row').forEach((r, i) => r.addEventListener('click', () => openMuscleDetail(MUSCLES[i][0])));
 }
 
 function fmtDuration(ms) {
@@ -287,13 +285,25 @@ function lastPerformance(exId, excludeId) {
   const mode = exMode(exId, it);
   return it.sets.filter(st => st.done).map(st => ({ ...st, mode }));
 }
+/* Vorwert passend zum Satz: Aufwärmsätze mit Aufwärmsätzen vergleichen, Arbeitssätze mit Arbeitssätzen */
+function prevFor(last, sets, j) {
+  if (!last) return null;
+  const isW = sets[j].type === 'w';
+  const idx = sets.slice(0, j).filter(x => (x.type === 'w') === isW).length;
+  return last.filter(x => (x.type === 'w') === isW)[idx] || null;
+}
+const SET_TYPES = [[undefined, ''], ['w', 'A'], ['d', 'D'], ['f', 'V']];
+const SET_TYPE_NAME = { w: 'Aufwärmsatz', d: 'Dropsatz', f: 'Bis zum Versagen' };
+function nextSetType(t) { const i = SET_TYPES.findIndex(x => x[0] === t); return SET_TYPES[(i + 1) % SET_TYPES.length][0]; }
+function exRest(exId) { const ex = S.exercises[exId]; return (ex && ex.rest) || S.settings.restSec; }
 
 /* Satz als Text. Bei Körpergewichtsübungen: BW, BW+10 kg, BW−20 kg */
 function setText(st) {
   const raw = st.add != null ? st.add : num(st.kg) || 0;
-  if (st.mode === 'bw') return `${raw ? 'BW+' + kgShort(raw) : 'BW'} × ${st.reps}`;
-  if (st.mode === 'assist') return `${raw ? 'BW−' + kgShort(raw) : 'BW'} × ${st.reps}`;
-  return `${fmt(num(st.kg), num(st.kg) % 1 ? 1 : 0)} kg × ${st.reps}`;
+  const tag = st.type ? ` (${SET_TYPES.find(x => x[0] === st.type)[1]})` : '';
+  if (st.mode === 'bw') return `${raw ? 'BW+' + kgShort(raw) : 'BW'} × ${st.reps}${tag}`;
+  if (st.mode === 'assist') return `${raw ? 'BW−' + kgShort(raw) : 'BW'} × ${st.reps}${tag}`;
+  return `${fmt(num(st.kg), num(st.kg) % 1 ? 1 : 0)} kg × ${st.reps}${tag}`;
 }
 
 function openSession(id) {
@@ -302,6 +312,7 @@ function openSession(id) {
   const d = new Date(s.start);
   const el = openSheet({
     title: s.name,
+    headRight: `<button class="icon-btn" id="sesEdit" aria-label="Training bearbeiten">${I.edit}</button>`,
     body: `<p class="muted" style="margin:0">${WD[d.getDay()]}, ${d.getDate()}. ${MON[d.getMonth()]} ${d.getFullYear()} · ${fmtDuration((s.end || s.start) - s.start)}</p>
       ${s.items.map(it => {
         const done = it.sets.filter(x => x.done);
@@ -309,13 +320,102 @@ function openSession(id) {
         return `<div class="card" style="padding:14px;gap:6px"><b>${esc((S.exercises[it.exId] || it).name)}</b>
           <span class="muted num" style="font-size:14px">${done.map(x => setText({ ...x, mode: exMode(it.exId, it) })).join(' · ')}</span></div>`;
       }).join('')}
+      <button class="btn" id="sesEdit2">${I.edit}Training bearbeiten</button>
       <button class="btn danger" id="sesDel">${I.trash}Training aus Verlauf löschen</button>`,
   });
+  const edit = () => { closeSheet(el); openSessionEditor(id); };
+  el.querySelector('#sesEdit').onclick = edit;
+  el.querySelector('#sesEdit2').onclick = edit;
   el.querySelector('#sesDel').onclick = async () => {
     if (await confirmSheet({ title: 'Training löschen?', text: 'Es wird aus dem Verlauf und dem Wochenvolumen entfernt.' })) {
       S.sessions = S.sessions.filter(x => x.id !== id); save(); closeSheet(el); renderTrain();
     }
   };
+}
+
+/* Abgeschlossenes Training bearbeiten: Sätze ändern, löschen, ergänzen, Übungen entfernen */
+function openSessionEditor(id) {
+  const orig = S.sessions.find(x => x.id === id);
+  if (!orig) return;
+  const s = JSON.parse(JSON.stringify(orig));
+  const el = openSheet({
+    title: 'Training bearbeiten',
+    body: `<div class="field"><label for="seName">Name</label><input class="input" id="seName" value="${esc(s.name)}"></div>
+      <div id="seBody" style="display:flex;flex-direction:column;gap:12px"></div>
+      <button class="btn" id="seAddEx">${I.plus}Übung hinzufügen</button>
+      <button class="btn primary" id="seSave">Speichern</button>`,
+  });
+  const body = el.querySelector('#seBody');
+  const draw = () => {
+    body.innerHTML = s.items.map((it, i) => {
+      const mode = exMode(it.exId, it);
+      return `<div class="ex">
+        <div class="ex-head"><div class="t"><b>${esc((S.exercises[it.exId] || it).name)}</b></div>
+          <button class="icon-btn" style="width:34px;height:34px" data-serm="${i}" aria-label="Übung entfernen">${I.trash}</button></div>
+        <div class="sets se">
+          <span class="hd">Satz</span><span class="hd">${mode === 'bw' ? '+kg' : mode === 'assist' ? '−kg' : 'kg'}</span><span class="hd">Wdh</span><span class="hd"></span>
+          ${it.sets.map((st, j) => `<button class="no st-${st.type || 'n'}" data-setype="${i}:${j}">${st.type ? SET_TYPES.find(x => x[0] === st.type)[1] : j + 1}</button>
+            <input class="input" inputmode="decimal" data-sekg="${i}:${j}" value="${esc(String(st.kg).replace('.', ','))}" aria-label="Gewicht">
+            <input class="input" inputmode="numeric" data-serp="${i}:${j}" value="${esc(st.reps)}" aria-label="Wiederholungen">
+            <button class="ck" data-sedel="${i}:${j}" aria-label="Satz löschen">${I.close}</button>`).join('')}
+        </div>
+        <button class="btn small" data-seadd="${i}" style="align-self:flex-start">${I.plus}Satz</button>
+      </div>`;
+    }).join('') || '<div class="empty">Keine Übungen mehr.</div>';
+    $$('[data-sekg]', body).forEach(x => x.oninput = () => { const [i, j] = x.dataset.sekg.split(':'); s.items[i].sets[j].kg = x.value.replace(',', '.'); });
+    $$('[data-serp]', body).forEach(x => x.oninput = () => { const [i, j] = x.dataset.serp.split(':'); s.items[i].sets[j].reps = x.value.replace(/\D/g, ''); });
+    $$('[data-setype]', body).forEach(x => x.onclick = () => { const [i, j] = x.dataset.setype.split(':'); const st = s.items[i].sets[j]; st.type = nextSetType(st.type); if (!st.type) delete st.type; draw(); });
+    $$('[data-sedel]', body).forEach(x => x.onclick = () => { const [i, j] = x.dataset.sedel.split(':').map(Number); s.items[i].sets.splice(j, 1); if (!s.items[i].sets.length) s.items.splice(i, 1); draw(); });
+    $$('[data-seadd]', body).forEach(x => x.onclick = () => { const it = s.items[+x.dataset.seadd]; const l = it.sets[it.sets.length - 1]; it.sets.push({ kg: l ? l.kg : '0', reps: l ? l.reps : '10', done: true }); draw(); });
+    $$('[data-serm]', body).forEach(x => x.onclick = () => { s.items.splice(+x.dataset.serm, 1); draw(); });
+  };
+  draw();
+  el.querySelector('#seAddEx').onclick = () => openExerciseLibrary((exId) => {
+    const ex = S.exercises[exId];
+    s.items.push({ exId, name: ex.name, primary: ex.primary, secondary: ex.secondary, mode: ex.mode || null, bw: ex.mode ? bwAt(s.start) : null, sets: [{ kg: '', reps: '', done: true }] });
+    draw();
+  });
+  el.querySelector('#seSave').onclick = () => {
+    for (const it of s.items) for (const st of it.sets) {
+      if (!(num(st.reps) > 0)) { toast('Bitte bei jedem Satz Wiederholungen eintragen'); return; }
+      if (st.kg === '' || isNaN(num(st.kg))) st.kg = '0';
+      st.done = true;
+    }
+    if (!s.items.length) { toast('Ein Training braucht mindestens eine Übung. Zum Entfernen „Löschen“ nutzen.'); return; }
+    s.name = el.querySelector('#seName').value.trim() || s.name;
+    const idx = S.sessions.findIndex(x => x.id === id);
+    S.sessions[idx] = s;
+    save(); closeSheet(el); renderTrain(); toast('Training gespeichert');
+  };
+}
+
+/* ---------- Muskel-Details: woher kommt das Wochenvolumen ---------- */
+function openMuscleDetail(m) {
+  const start = weekStart();
+  const end = new Date(start); end.setDate(end.getDate() + 7);
+  const f = S.settings.secondaryFactor;
+  const rows = [];
+  S.sessions.filter(s => { const t = new Date(s.start); return t >= start && t < end; }).sort((a, b) => a.start - b.start).forEach(s => {
+    s.items.forEach(it => {
+      const ex = S.exercises[it.exId] || it;
+      const n = it.sets.filter(st => st.done && st.type !== 'w').length;
+      if (!n) return;
+      const prim = (ex.primary || []).includes(m), sec = (ex.secondary || []).includes(m);
+      if (!prim && !sec) return;
+      rows.push({ d: new Date(s.start), name: ex.name, n, role: prim ? 'primär' : 'sekundär', val: prim ? n : n * f });
+    });
+  });
+  const total = rows.reduce((a, r) => a + r.val, 0);
+  const z = S.settings.zones;
+  const zoneTxt = !total ? 'Diese Woche noch nicht trainiert.' : total < z.low ? `Unter dem Minimum von ${z.low} Sätzen.` : total < z.opt ? `Noch ${fmt(z.opt - total, total % 1 ? 1 : 0)} Sätze bis zur Wachstumszone.` : total <= z.high ? 'In der Wachstumszone.' : `Über ${z.high} Sätzen, der Zusatznutzen wird hier klein.`;
+  const ideas = total < z.opt ? Object.values(S.exercises).filter(e => (e.primary || []).includes(m)).sort((a, b) => (a.primary.length - b.primary.length) || a.name.localeCompare(b.name, 'de')).slice(0, 5) : [];
+  openSheet({
+    title: MUSCLE_NAME[m],
+    body: `<div class="big-weight"><b class="num" style="color:${zoneColor(total)}">${fmt(total, total % 1 ? 1 : 0)}</b><span>Sätze diese Woche</span></div>
+      <p class="muted" style="margin:0">${zoneTxt}</p>
+      ${rows.length ? `<div class="list">${rows.map(r => `<div class="list-item"><div class="t"><b>${esc(r.name)}</b><span>${WD[r.d.getDay()]}, ${r.d.getDate()}. ${MON[r.d.getMonth()]} · ${r.n} ${r.n === 1 ? 'Satz' : 'Sätze'} ${r.role}</span></div><span class="num" style="font-weight:600">+${fmt(r.val, r.val % 1 ? 1 : 0)}</span></div>`).join('')}</div>` : ''}
+      ${ideas.length ? `<div class="eyebrow">Übungen dafür</div><div class="chips">${ideas.map(e => `<span class="chip">${esc(e.name)}</span>`).join('')}</div>` : ''}`,
+  });
 }
 
 /* ---------- Aktives Training ---------- */
@@ -347,14 +447,28 @@ function showWorkout() {
   box.hidden = false;
   if (!workoutLocked) { lockScroll(); workoutLocked = true; }
   drawWorkout();
+  keepAwake(true);
   clearInterval(woTick);
   woTick = setInterval(() => {
     const t = $('#woElapsed');
     if (t && S.active) t.textContent = clockStr(Date.now() - S.active.start);
   }, 1000);
 }
+/* Bildschirm während des Trainings anlassen (wenn das iPhone es erlaubt) */
+let wakeLock = null, wantAwake = false;
+async function keepAwake(on) {
+  wantAwake = on;
+  try {
+    if (on && 'wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) { wakeLock = null; }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && wantAwake) keepAwake(true); });
 function hideWorkout() {
   document.getElementById('workout').hidden = true;
+  keepAwake(false);
   if (workoutLocked) { unlockScroll(); workoutLocked = false; }
   clearInterval(woTick);
   if (currentTab === 'train') renderTrain();
@@ -365,15 +479,32 @@ function clockStr(ms) {
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
 }
 
+const openNotes = new Set();
+function liveStats(a) {
+  const bw = currentBW();
+  let vol = 0, sets = 0;
+  a.items.forEach(it => {
+    const mode = exMode(it.exId);
+    it.sets.forEach(st => {
+      if (!st.done || st.type === 'w') return;
+      sets++;
+      vol += effKg(mode, st.kg, bw) * (num(st.reps) || 0);
+    });
+  });
+  return { vol, sets, total: a.items.reduce((n, it) => n + it.sets.length, 0) };
+}
+
 function drawWorkout() {
   const a = S.active;
   const box = document.getElementById('workout');
   if (!a) { hideWorkout(); return; }
   const scrollY = box.querySelector('.wb') ? box.querySelector('.wb').scrollTop : 0;
+  const ls = liveStats(a);
   box.innerHTML = `
     <div class="wh">
       <button class="icon-btn" id="woMin" aria-label="Minimieren">${I.down}</button>
-      <div class="t"><b>${esc(a.name)}</b><span id="woElapsed">${clockStr(Date.now() - a.start)}</span></div>
+      <div class="t"><b>${esc(a.name)}</b>
+        <span class="live num"><em id="woElapsed">${clockStr(Date.now() - a.start)}</em> · ${fmt(ls.vol)} kg · ${ls.sets}/${ls.total} Sätze</span></div>
       <button class="btn small primary" id="woFinish">Beenden</button>
     </div>
     <div class="wb">
@@ -385,31 +516,44 @@ function drawWorkout() {
         const prog = progressionFor(it.exId, a.id);
         const mode = exMode(it.exId);
         const curBW = currentBW();
-        const kgHint = (pv) => {
-          const v = prog && prog.kg != null ? prog.kg : pv ? num(pv.kg) : null;
+        const kgHint = (pv, st) => {
+          const v = st.type !== 'w' && prog && prog.kg != null ? prog.kg : pv ? num(pv.kg) : null;
           if (v == null) return mode ? 'BW' : 'kg';
           return mode && !v ? 'BW' : String(v);
         };
         const eff = st => effKg(mode, st.kg, curBW);
-        const isPR = st => st.done && best && (bw ? num(st.reps) > best.maxReps.maxReps : (e1rm(eff(st), st.reps) > best.e1rm.e1rm + 1e-9 || eff(st) > best.maxKg.maxKg));
+        const isPR = st => st.done && st.type !== 'w' && best && (bw ? num(st.reps) > best.maxReps.maxReps : (e1rm(eff(st), st.reps) > best.e1rm.e1rm + 1e-9 || eff(st) > best.maxKg.maxKg));
+        const note = (S.exercises[it.exId] || {}).note || '';
+        const noteOpen = openNotes.has(it.exId);
+        const restS = exRest(it.exId);
+        const custom = !!(S.exercises[it.exId] || {}).rest;
         return `<div class="ex">
           <div class="ex-head">
             <button class="t" data-statex="${it.exId}" style="text-align:left"><b>${esc(ex.name)}</b><span>${esc(musclesText(ex))}${mode ? ` · ${mode === 'assist' ? 'Unterstützt' : 'Körpergewicht'}${curBW ? ' (' + kgShort(curBW) + ')' : ', bitte Gewicht eintragen'}` : ''} · Statistik ›</span></button>
             <button class="icon-btn" style="width:34px;height:34px" data-rmex="${i}" aria-label="Übung entfernen">${I.trash}</button>
           </div>
+          <div class="ex-tools">
+            <button class="tool ${note ? 'has' : ''} ${noteOpen ? 'on' : ''}" data-note="${i}" aria-expanded="${noteOpen}">${I.edit}Notiz${note && !noteOpen ? '<i class="dotm"></i>' : ''}</button>
+            <button class="tool ${custom ? 'has' : ''}" data-rest="${i}">${I.clock}${clockStr(restS * 1000)}</button>
+            <button class="tool" data-swap="${i}">${I.swap}Tauschen</button>
+          </div>
+          ${noteOpen ? `<textarea class="input note-in" id="note_${i}" data-notein="${i}" rows="2" placeholder="z. B. Sitz Stufe 4, Polster auf 6">${esc(note)}</textarea>` : ''}
           <div class="ex-last">${last ? 'Letztes Mal: ' + last.map(setText).join(' · ') : 'Noch keine Vorwerte'}</div>
           ${progressionHTML(prog)}
           <div class="sets">
             <span class="hd">Satz</span><span class="hd">Vorher</span><span class="hd">${mode === 'bw' ? '+kg' : mode === 'assist' ? '−kg' : 'kg'}</span><span class="hd">Wdh</span><span class="hd">✓</span>
             ${it.sets.map((st, j) => {
-              const pv = last && last[j];
-              return `<span class="no">${isPR(st) ? `<span class="trophy" title="Neuer Rekord">${I.trophy}</span>` : j + 1}</span>
-                <span class="prev">${pv ? setText(pv) : '–'}</span>
-                <input class="input ${st.done ? 'dn' : ''}" inputmode="decimal" id="kg_${i}_${j}" data-kg="${i}:${j}" value="${esc(String(st.kg).replace('.', ','))}" placeholder="${esc(kgHint(pv).replace('.', ','))}" aria-label="Gewicht Satz ${j + 1}">
+              const pv = prevFor(last, it.sets, j);
+              const workNo = it.sets.slice(0, j + 1).filter(x => x.type !== 'w').length;
+              const lbl = st.type ? SET_TYPES.find(x => x[0] === st.type)[1] : workNo;
+              return `<button class="no st-${st.type || 'n'}" data-stype="${i}:${j}" aria-label="Satztyp ändern: ${st.type ? SET_TYPE_NAME[st.type] : 'normal'}">${isPR(st) ? `<span class="trophy" title="Neuer Rekord">${I.trophy}</span>` : lbl}</button>
+                <span class="prev">${pv ? setText({ ...pv, type: undefined }) : '–'}</span>
+                <input class="input ${st.done ? 'dn' : ''}" inputmode="decimal" id="kg_${i}_${j}" data-kg="${i}:${j}" value="${esc(String(st.kg).replace('.', ','))}" placeholder="${esc(kgHint(pv, st).replace('.', ','))}" aria-label="Gewicht Satz ${j + 1}">
                 <input class="input ${st.done ? 'dn' : ''}" inputmode="numeric" id="rp_${i}_${j}" data-rp="${i}:${j}" value="${esc(st.reps)}" placeholder="${pv ? esc(String(pv.reps)) : 'Wdh'}" aria-label="Wiederholungen Satz ${j + 1}">
                 <button class="ck ${st.done ? 'on' : ''}" data-ck="${i}:${j}" aria-label="Satz ${j + 1} abhaken">${I.check}</button>`;
             }).join('')}
           </div>
+          ${!S.settings.setTypeHint ? '<p class="hint">Tipp: Satznummer antippen für Aufwärm- (A), Drop- (D) oder Versagenssatz (V). Aufwärmsätze zählen nicht ins Volumen.</p>' : ''}
           <div class="ex-actions">
             <button class="btn small" data-addset="${i}">${I.plus}Satz</button>
             <button class="btn small" data-rmset="${i}" ${it.sets.length <= 1 ? 'disabled' : ''}>– Satz</button>
@@ -417,11 +561,11 @@ function drawWorkout() {
         </div>`;
       }).join('')}
       <button class="btn" id="woAddEx">${I.plus}Übung hinzufügen</button>
+      ${a.items.length > 1 ? `<button class="btn" id="woSort">${I.list}Reihenfolge ändern</button>` : ''}
       <button class="btn danger" id="woDiscard">Training verwerfen</button>
     </div>
     ${restTimerHTML()}`;
   box.querySelector('.wb').scrollTop = scrollY;
-  // Abgehakte Sätze grün hinterlegen
   $$('.input.dn', box).forEach(inp => { inp.style.background = 'var(--green-soft)'; inp.style.borderColor = 'transparent'; });
 
   $('#woMin').onclick = hideWorkout;
@@ -433,6 +577,28 @@ function drawWorkout() {
   };
   $$('[data-statex]', box).forEach(b => b.onclick = () => openExerciseStats(b.dataset.statex));
   $('#woAddEx').onclick = () => openExerciseLibrary((exId) => { a.items.push(newItem(exId, 3)); save(); drawWorkout(); });
+  if ($('#woSort')) $('#woSort').onclick = () => openReorder(a.items, () => { save(); drawWorkout(); });
+  $$('[data-note]', box).forEach(b => b.onclick = () => {
+    const id = a.items[+b.dataset.note].exId;
+    if (openNotes.has(id)) openNotes.delete(id); else openNotes.add(id);
+    drawWorkout();
+    const ta = $('#note_' + b.dataset.note); if (ta) ta.focus();
+  });
+  $$('[data-notein]', box).forEach(ta => ta.oninput = () => {
+    const ex = S.exercises[a.items[+ta.dataset.notein].exId];
+    if (ex) { ex.note = ta.value; save(); }
+  });
+  $$('[data-rest]', box).forEach(b => b.onclick = () => openRestPicker(a.items[+b.dataset.rest].exId));
+  $$('[data-swap]', box).forEach(b => b.onclick = () => openSwap(+b.dataset.swap));
+  $$('[data-stype]', box).forEach(b => b.onclick = () => {
+    const [i, j] = b.dataset.stype.split(':').map(Number);
+    const st = a.items[i].sets[j];
+    st.type = nextSetType(st.type);
+    if (!st.type) delete st.type;
+    if (!S.settings.setTypeHint) S.settings.setTypeHint = true;
+    save(); drawWorkout();
+    toast(st.type ? SET_TYPE_NAME[st.type] : 'Normaler Satz');
+  });
   $$('[data-kg]', box).forEach(inp => inp.oninput = () => { const [i, j] = inp.dataset.kg.split(':'); a.items[i].sets[j].kg = inp.value.replace(',', '.'); save(); });
   $$('[data-rp]', box).forEach(inp => inp.oninput = () => { const [i, j] = inp.dataset.rp.split(':'); a.items[i].sets[j].reps = inp.value.replace(/\D/g, ''); save(); });
   $$('[data-ck]', box).forEach(b => b.onclick = () => {
@@ -447,14 +613,14 @@ function drawWorkout() {
       if (st.kg === '') st.kg = '0';
       st.done = true;
       haptic();
-      startRest();
-      const best = exerciseBests(a.items[i].exId, a.id);
+      startRest(st.type === 'w' ? Math.min(60, exRest(a.items[i].exId)) : exRest(a.items[i].exId));
+      const best = st.type === 'w' ? null : exerciseBests(a.items[i].exId, a.id);
       if (best) {
         const mode = exMode(a.items[i].exId);
         const cbw = currentBW();
         const ef = x => effKg(mode, x.kg, cbw);
         const bw = best.hist.every(r => r.maxKg === 0);
-        const prevInSession = a.items[i].sets.filter((x, k) => k !== j && x.done);
+        const prevInSession = a.items[i].sets.filter((x, k) => k !== j && x.done && x.type !== 'w');
         const sessBest = Math.max(0, ...prevInSession.map(x => bw ? num(x.reps) : e1rm(ef(x), x.reps)));
         const val = bw ? num(st.reps) : e1rm(ef(st), st.reps);
         const rec = bw ? best.maxReps.maxReps : best.e1rm.e1rm;
@@ -481,6 +647,117 @@ function drawWorkout() {
     }
   });
   bindRestTimer();
+}
+
+/* ---------- Pausenzeit pro Übung ---------- */
+function openRestPicker(exId) {
+  const ex = S.exercises[exId];
+  if (!ex) return;
+  const opts = [60, 90, 120, 150, 180, 240, 300];
+  const el = openSheet({
+    title: 'Pause: ' + ex.name,
+    body: `<p class="muted" style="margin:0;font-size:14px">Gilt immer für diese Übung. Standard ist ${clockStr(S.settings.restSec * 1000)}.</p>
+      <div class="chips">${opts.map(o => `<button class="chip ${ex.rest === o ? 'p' : ''}" data-r="${o}">${clockStr(o * 1000)}</button>`).join('')}</div>
+      <button class="btn" data-r="0">${ex.rest ? 'Zurück auf Standard' : 'Standard beibehalten'}</button>`,
+  });
+  $$('[data-r]', el).forEach(b => b.onclick = () => {
+    const v = +b.dataset.r;
+    if (v) ex.rest = v; else delete ex.rest;
+    save(); closeSheet(el); drawWorkout();
+  });
+}
+
+/* ---------- Übung tauschen ---------- */
+function swapCandidates(exId) {
+  const ex = S.exercises[exId] || {};
+  const P = new Set(ex.primary || []), Sx = new Set(ex.secondary || []);
+  const stem = n => String(n || '').toLowerCase().split(/[\s(]/)[0];
+  const base = stem(ex.name);
+  return Object.values(S.exercises).filter(e => e.id !== exId).map(e => {
+    let sc = 0;
+    (e.primary || []).forEach(m => { sc += P.has(m) ? 3 : Sx.has(m) ? -1 : -2; });
+    (e.secondary || []).forEach(m => { sc += Sx.has(m) ? 1 : P.has(m) ? 0.5 : -0.5; });
+    sc -= [...P].filter(m => !(e.primary || []).includes(m)).length * 2;
+    if (base && stem(e.name) === base) sc += 2; // gleiche Übung, anderes Gerät
+    return { e, sc };
+  }).filter(x => x.sc > 1).sort((a, b) => b.sc - a.sc || a.e.name.localeCompare(b.e.name, 'de')).slice(0, 15);
+}
+function openSwap(i) {
+  const a = S.active;
+  const it = a.items[i];
+  const cands = swapCandidates(it.exId);
+  const el = openSheet({
+    title: 'Übung tauschen',
+    body: `<p class="muted" style="margin:0;font-size:14px">Statt „${esc(it.name)}“. Oben stehen Übungen mit denselben Hauptmuskeln.</p>
+      <div class="list">${cands.map(c => `<button class="list-item" data-to="${c.e.id}"><div class="t"><b>${esc(c.e.name)}</b><span>${esc(musclesText(c.e))}</span></div><svg class="chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>`).join('') || '<div class="empty">Keine passende Übung gefunden.</div>'}</div>
+      <button class="btn" id="swAll">${I.search}Alle Übungen durchsuchen</button>`,
+  });
+  const doSwap = (toId) => {
+    const done = it.sets.filter(st => st.done);
+    const nItem = newItem(toId, Math.max(1, it.sets.length - done.length));
+    if (done.length) {
+      it.sets = done;               // erledigte Sätze bleiben bei der alten Übung
+      a.items.splice(i + 1, 0, nItem);
+    } else a.items.splice(i, 1, nItem);
+    save(); closeSheet(el); drawWorkout();
+    toast(`Getauscht gegen ${S.exercises[toId].name}`);
+  };
+  $$('[data-to]', el).forEach(b => b.onclick = () => doSwap(b.dataset.to));
+  el.querySelector('#swAll').onclick = () => openExerciseLibrary(doSwap);
+}
+
+/* ---------- Reihenfolge per Ziehen ---------- */
+function openReorder(items, onDone) {
+  const order = items.slice();
+  const el = openSheet({
+    title: 'Reihenfolge',
+    body: `<p class="muted" style="margin:0;font-size:14px">Am Griff rechts ziehen.</p><div class="reorder" id="roList"></div>
+      <button class="btn primary" id="roSave">Fertig</button>`,
+  });
+  const list = el.querySelector('#roList');
+  const draw = () => {
+    list.innerHTML = order.map((it, i) => `<div class="ro-row" data-i="${i}"><span class="ro-no num">${i + 1}</span><b>${esc(it.name || (S.exercises[it.exId] || {}).name || '')}</b><span class="ro-grip" data-grip="${i}" aria-label="Ziehen">${I.grip}</span></div>`).join('');
+    $$('[data-grip]', list).forEach(g => g.addEventListener('pointerdown', startDrag));
+  };
+  let drag = null;
+  function startDrag(e) {
+    e.preventDefault();
+    const row = e.target.closest('.ro-row');
+    const rows = $$('.ro-row', list);
+    drag = { from: +row.dataset.i, y0: e.clientY, h: row.getBoundingClientRect().height + 8, row, rows, to: +row.dataset.i };
+    row.classList.add('drag');
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
+    e.target.addEventListener('pointermove', moveDrag);
+    e.target.addEventListener('pointerup', endDrag, { once: true });
+    e.target.addEventListener('pointercancel', endDrag, { once: true });
+  }
+  function moveDrag(e) {
+    if (!drag) return;
+    const dy = e.clientY - drag.y0;
+    drag.row.style.transform = `translateY(${dy}px)`;
+    const to = clamp(drag.from + Math.round(dy / drag.h), 0, order.length - 1);
+    drag.to = to;
+    drag.rows.forEach((r, k) => {
+      if (k === drag.from) return;
+      let shift = 0;
+      if (drag.from < to && k > drag.from && k <= to) shift = -drag.h;
+      if (drag.from > to && k < drag.from && k >= to) shift = drag.h;
+      r.style.transform = shift ? `translateY(${shift}px)` : '';
+    });
+  }
+  function endDrag(e) {
+    e.target.removeEventListener('pointermove', moveDrag);
+    if (!drag) return;
+    const [m] = order.splice(drag.from, 1);
+    order.splice(drag.to, 0, m);
+    drag = null;
+    draw();
+  }
+  draw();
+  el.querySelector('#roSave').onclick = () => {
+    items.splice(0, items.length, ...order);
+    closeSheet(el); onDone();
+  };
 }
 
 async function finishWorkout() {
@@ -514,9 +791,9 @@ async function finishWorkout() {
 let rest = { end: 0, dur: 0, timer: null, beeped: false };
 let audioCtx = null;
 
-function startRest() {
+function startRest(sec) {
   try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) {}
-  rest.dur = S.settings.restSec;
+  rest.dur = sec || S.settings.restSec;
   rest.end = Date.now() + rest.dur * 1000;
   rest.beeped = false;
   runRest();

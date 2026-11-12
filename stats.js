@@ -41,7 +41,7 @@ function exerciseHistory(exId, excludeId) {
       if (!it) return null;
       const mode = exMode(exId, it);
       const bw = it.bw != null ? it.bw : bwAt(s.start);
-      const sets = it.sets.filter(x => x.done).map(x => ({ kg: effKg(mode, x.kg, bw), add: num(x.kg) || 0, mode, reps: num(x.reps) || 0 }));
+      const sets = it.sets.filter(x => x.done && x.type !== 'w').map(x => ({ kg: effKg(mode, x.kg, bw), add: num(x.kg) || 0, mode, reps: num(x.reps) || 0 }));
       if (!sets.length) return null;
       return {
         sid: s.id,

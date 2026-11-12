@@ -75,9 +75,11 @@ function openStreakInfo() {
 
 /* ---------- Briefing nach dem Training ---------- */
 function showWorkoutSummary(sess, streakBefore) {
-  const sets = sess.items.reduce((a, it) => a + it.sets.length, 0);
-  const reps = sess.items.reduce((a, it) => a + it.sets.reduce((b, st) => b + (num(st.reps) || 0), 0), 0);
-  const sessVol = (s) => s.items.reduce((a, it) => { const bw = it.bw != null ? it.bw : bwAt(s.start); return a + it.sets.reduce((b, st) => b + effKg(exMode(it.exId, it), st.kg, bw) * (num(st.reps) || 0), 0); }, 0);
+  const W = st => st.type !== 'w';
+  const sets = sess.items.reduce((a, it) => a + it.sets.filter(W).length, 0);
+  const warm = sess.items.reduce((a, it) => a + it.sets.filter(st => !W(st)).length, 0);
+  const reps = sess.items.reduce((a, it) => a + it.sets.filter(W).reduce((b, st) => b + (num(st.reps) || 0), 0), 0);
+  const sessVol = (s) => s.items.reduce((a, it) => { const bw = it.bw != null ? it.bw : bwAt(s.start); return a + it.sets.filter(st => st.type !== 'w').reduce((b, st) => b + effKg(exMode(it.exId, it), st.kg, bw) * (num(st.reps) || 0), 0); }, 0);
   const volume = sessVol(sess);
   const dur = (sess.end || Date.now()) - sess.start;
   const prs = groupPRs(allPRs().filter(p => p.row.sid === sess.id));
@@ -102,7 +104,7 @@ function showWorkoutSummary(sess, streakBefore) {
       <div class="sum-grid">
         <div class="sum-tile"><b class="num">${fmtDuration(dur)}</b><span>Dauer</span></div>
         <div class="sum-tile"><b class="num">${fmt(volume)} kg</b><span>Volumen${volDiff != null ? ` · <em class="${volDiff >= 0 ? 'green' : 'red'}">${volDiff >= 0 ? '+' : ''}${fmt(volDiff, 0)} %</em>` : ''}</span></div>
-        <div class="sum-tile"><b class="num">${sets}</b><span>Sätze</span></div>
+        <div class="sum-tile"><b class="num">${sets}</b><span>${sets === 1 ? 'Satz' : 'Sätze'}${warm ? ` + ${warm} Aufwärmen` : ''}</span></div>
         <div class="sum-tile"><b class="num">${reps}</b><span>Wiederholungen</span></div>
       </div>
       ${prs.length ? `<div class="sum-prs">
